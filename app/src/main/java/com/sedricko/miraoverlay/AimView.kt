@@ -80,9 +80,18 @@ class AimView(ctx: Context) : View(ctx) {
 
     // A bala sai da PONTA da arma, não do corpo: ombro um pouco à frente do cabelo (lado da mira) + comprimento da arma.
     // shortcut: medidas em fração da largura da tela, tiradas de 2 prints; refinar se a linha ainda sair torta.
-    private fun pivotX(dirX: Float) = origin.x + (if (dirX >= 0f) 1f else -1f) * 0.03f * width
-    private fun pivotY() = origin.y - 0.012f * width
-    private fun muzzle(dx: Float, dy: Float) = PointF(pivotX(dx) + dx * 0.048f * width, pivotY() + dy * 0.048f * width)
+    // o braço sobe e desce com a mira: a base da arma fica ~0,04*largura abaixo do cabelo mirando para baixo e acima mirando para cima
+    private fun pivotX(dirX: Float) = origin.x + (if (dirX >= 0f) 1f else -1f) * 0.036f * width
+    private fun pivotY(dirY: Float) = origin.y + 0.042f * width * dirY
+    private fun muzzle(dx: Float, dy: Float) = PointF(pivotX(dx) + dx * 0.048f * width, pivotY(dy) + dy * 0.048f * width)
+    /** direção unitária do corpo até a mira que o dedo segura (a base da arma depende da própria direção: 2 passadas) */
+    private fun dirTo(p: PointF): PointF {
+        var dx = p.x - origin.x; var dy = p.y - origin.y; var l = hypot(dx, dy).coerceAtLeast(1f)
+        repeat(2) {
+            dx = p.x - pivotX(dx); dy = p.y - pivotY(dy / l); l = hypot(dx, dy).coerceAtLeast(1f)
+        }
+        return PointF(dx / l, dy / l)
+    }
 
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
 
@@ -234,10 +243,8 @@ class AimView(ctx: Context) : View(ctx) {
         if (!autoMode) { // manual: a linha acompanha o dedo
             line.color = 0xFFFF3B30.toInt()
             val p = aimPt ?: return
-            val dx = p.x - pivotX(p.x - origin.x); val dy = p.y - pivotY()
-            val len = hypot(dx, dy)
-            if (len < 1f) return
-            drawPath(c, trace(dx / len, dy / len, area, block, null).first)
+            val d = dirTo(p)
+            drawPath(c, trace(d.x, d.y, area, block, null).first, byBounce = false)
             c.drawCircle(p.x, p.y, 40f, line)
             c.drawLine(p.x - 60f, p.y, p.x + 60f, p.y, line)
             c.drawLine(p.x, p.y - 60f, p.x, p.y + 60f, line)
@@ -245,12 +252,13 @@ class AimView(ctx: Context) : View(ctx) {
         }
         // destino final da bala para a mira que você está segurando
         crosshair?.let { p ->
-            val dx = p.x - pivotX(p.x - origin.x); val dy = p.y - pivotY(); val len = hypot(dx, dy)
+            val d = dirTo(p); val len = hypot(p.x - origin.x, p.y - origin.y)
             if (len > 5f) {
-                val pts = trace(dx / len, dy / len, area, block, null).first
+                val dx = d.x; val dy = d.y
+                val pts = trace(dx, dy, area, block, null).first
                 line.color = 0xFF2F6BFF.toInt(); line.strokeWidth = 5f
-                drawPath(c, pts)
-                val e = pts.last(); val hit = targets.any { trace(dx / len, dy / len, area, block, it).second }
+                drawPath(c, pts, byBounce = false)
+                val e = pts.last(); val hit = targets.any { trace(dx, dy, area, block, it).second }
                 line.color = if (hit) 0xFF34C759.toInt() else 0xFFFF3B30.toInt()
                 c.drawCircle(e.x, e.y, 30f, line); dot.color = line.color; c.drawCircle(e.x, e.y, 10f, dot)
                 line.strokeWidth = 6f
@@ -259,16 +267,24 @@ class AimView(ctx: Context) : View(ctx) {
         // guia: rotas que acertam; o ponto azul é onde apontar no jogo
         // segurando a mira: só a melhor rota, para a tela não encher de linhas
         solve().filter { crosshair == null || it.third == 0 || it.third == 3 }.sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
-            line.color = when (kind) { 0 -> 0xFF34C759.toInt(); 1 -> 0xFF00C7FF.toInt(); 2 -> 0xFFFF7000.toInt(); else -> 0xFFAF52DE.toInt() }
             line.strokeWidth = if (kind == 0 || kind == 3) 7f else 4f
+            line.pathEffect = if (kind >= 2) DashPathEffect(floatArrayOf(26f, 14f), 0f) else null // tracejada = alternativa / mais ricochetes
             drawPath(c, pts)
+            line.pathEffect = null
             dot.color = 0xFF0A84FF.toInt(); c.drawCircle(aim.x, aim.y, 14f, dot)
         }
         line.strokeWidth = 6f
     }
 
-    private fun drawPath(c: Canvas, pts: List<PointF>) {
-        for (i in 0 until pts.size - 1) c.drawLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, line)
+    // cor de cada trecho = quantas batidas já deu: 1º reto verde, 2º amarelo, 3º laranja, 4º rosa, 5º+ branco
+    private val bounceColors = intArrayOf(0xFF34C759.toInt(), 0xFFFFD60A.toInt(), 0xFFFF9500.toInt(), 0xFFFF2D92.toInt(), 0xFFFFFFFF.toInt())
+    private fun drawPath(c: Canvas, pts: List<PointF>, byBounce: Boolean = true) {
+        val keep = line.color
+        for (i in 0 until pts.size - 1) {
+            if (byBounce) line.color = bounceColors[min(i, bounceColors.size - 1)]
+            c.drawLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, line)
+        }
+        line.color = keep
         dot.color = 0xFFFFFFFF.toInt()
         for (i in 1 until pts.size - 1) c.drawCircle(pts[i].x, pts[i].y, 10f, dot)
     }
