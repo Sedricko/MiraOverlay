@@ -84,18 +84,21 @@ class OverlayService : Service() {
                 if (bmp != null) {
                     val a = android.graphics.RectF(minOf(aim.areaA.x, aim.areaB.x), minOf(aim.areaA.y, aim.areaB.y),
                         maxOf(aim.areaA.x, aim.areaB.x), maxOf(aim.areaA.y, aim.areaB.y))
-                    val det = findTargets(bmp, a, aim.origin)
-                    val found = det.enemies
-                    aim.setWalls(det)
+                    val det = findTargets(bmp, a)
                     bmp.recycle()
-                    det.shooter?.let { aim.origin.set(it.x, it.y); originHandle.refresh() } // acha a atiradora sozinho
-                    // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
-                    misses = if (found.isEmpty()) misses + 1 else 0
-                    if (found.isNotEmpty() || misses >= 3) aim.targets = found
+                    if (det == null) { // tela que não é o jogo (vitória/transição): some com o guia
+                        misses = 3; aim.targets = emptyList()
+                    } else {
+                        aim.setWalls(det)
+                        det.shooter?.let { aim.origin.set(it.x, it.y); originHandle.refresh() } // acha a atiradora sozinho
+                        // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
+                        misses = if (det.enemies.isEmpty()) misses + 1 else 0
+                        if (det.enemies.isNotEmpty() || misses >= 3) aim.targets = det.enemies
+                    }
                     aim.invalidate()
                 }
             }
-            ui.postDelayed(this, 1000)
+            ui.postDelayed(this, 400) // plataformas se mexem: atualiza rápido
         }
     }
 

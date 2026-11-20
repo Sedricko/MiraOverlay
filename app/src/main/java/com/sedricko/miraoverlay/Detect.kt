@@ -12,84 +12,89 @@ class Detection(
     val walls: BooleanArray, val cols: Int, val rows: Int, val left: Float, val top: Float,
 )
 
-private class Blob(val l: Float, val t: Float, val r: Float, val b: Float) {
+private class Cl(val l: Float, val t: Float, val r: Float, val b: Float, val tot: Int, val cx: Float, val cy: Float) {
     val w get() = r - l
     val h get() = b - t
-    val cx get() = (l + r) / 2
 }
 
+private const val CELL = 16
+
 /**
- * Acha na área de jogo as manchas escuras em pé (roupas/cabelo).
- * A atiradora é a que tem cabelo loiro; as demais são inimigos.
- * shortcut: heurística de cor; fases escuras ou inimigo de cabelo loiro podem falhar, trocar por template matching.
+ * Lê o print da área de jogo:
+ * - inimigos: manchas escuras em pé (roupas/cabelo); objetos explosivos vermelhos também são alvos
+ * - atiradora: cabelo loiro ao lado de uma mancha escura (chapéu/botas)
+ * - paredes: cor de tijolo (caixas e barris não contam)
+ * Devolve null em tela que não é o jogo (vitória, transição escura).
+ * shortcut: heurística de cor; fases de fundo escuro ou inimigo loiro podem falhar, trocar por template matching.
  */
-fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection {
-    val cell = 16
-    val cols = (a.width() / cell).toInt() + 1; val rows = (a.height() / cell).toInt() + 1
-    val cnt = IntArray(cols * rows)
+fun findTargets(b: Bitmap, a: RectF): Detection? {
+    val cols = (a.width() / CELL).toInt() + 1; val rows = (a.height() / CELL).toInt() + 1
+    val dark = IntArray(cols * rows); val gold = IntArray(cols * rows); val red = IntArray(cols * rows)
     var y = a.top.toInt() + 6
     while (y < a.bottom - 6 && y < b.height) {
         var x = a.left.toInt() + 6
         while (x < a.right - 6 && x < b.width) {
-            val px = b.getPixel(x, y)
-            if (max(max((px shr 16) and 255, (px shr 8) and 255), px and 255) < 75)
-                cnt[((y - a.top) / cell).toInt() * cols + ((x - a.left) / cell).toInt()]++
+            val p = b.getPixel(x, y)
+            val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
+            val i = ((y - a.top) / CELL).toInt() * cols + ((x - a.left) / CELL).toInt()
+            if (max(max(r, g), bb) < 75) dark[i]++
+            if (r > 190 && g in 140..215 && bb < 120) gold[i]++
+            if (r > 170 && g < 80 && bb < 80) red[i]++
             x += 4
         }
         y += 4
     }
-    val seen = BooleanArray(cols * rows)
-    val blobs = mutableListOf<Blob>()
-    for (start in cnt.indices) {
-        if (cnt[start] < 3 || seen[start]) continue
-        var minC = cols; var maxC = 0; var minR = rows; var maxR = 0
-        val stack = ArrayDeque<Int>().apply { add(start) }; seen[start] = true
-        while (stack.isNotEmpty()) {
-            val i = stack.removeLast(); val c = i % cols; val r = i / cols
-            minC = minOf(minC, c); maxC = max(maxC, c); minR = minOf(minR, r); maxR = max(maxR, r)
-            for (dr in -2..2) for (dc in -2..2) {
-                val nc = c + dc; val nr = r + dr
-                if (nc !in 0 until cols || nr !in 0 until rows) continue
-                val n = nr * cols + nc
-                if (!seen[n] && cnt[n] >= 3) { seen[n] = true; stack.add(n) }
+
+    // manchas = componentes conexos de células com pelo menos th amostras
+    fun comps(cnt: IntArray, th: Int): List<Cl> {
+        val seen = BooleanArray(cnt.size); val out = mutableListOf<Cl>()
+        for (start in cnt.indices) {
+            if (cnt[start] < th || seen[start]) continue
+            var minC = cols; var maxC = 0; var minR = rows; var maxR = 0; var tot = 0; var sx = 0f; var sy = 0f
+            val stack = ArrayDeque<Int>().apply { add(start) }; seen[start] = true
+            while (stack.isNotEmpty()) {
+                val i = stack.removeLast(); val c = i % cols; val r = i / cols
+                tot += cnt[i]; sx += cnt[i] * c; sy += cnt[i] * r
+                minC = minOf(minC, c); maxC = max(maxC, c); minR = minOf(minR, r); maxR = max(maxR, r)
+                for (dr in -2..2) for (dc in -2..2) {
+                    val nc = c + dc; val nr = r + dr
+                    if (nc !in 0 until cols || nr !in 0 until rows) continue
+                    val n = nr * cols + nc
+                    if (!seen[n] && cnt[n] >= th) { seen[n] = true; stack.add(n) }
+                }
             }
+            out.add(Cl(a.left + minC * CELL, a.top + minR * CELL, a.left + (maxC + 1) * CELL, a.top + (maxR + 1) * CELL,
+                tot, a.left + (sx / tot + .5f) * CELL, a.top + (sy / tot + .5f) * CELL))
         }
-        val bl = Blob(a.left + minC * cell, a.top + minR * cell, a.left + (maxC + 1) * cell, a.top + (maxR + 1) * cell)
-        if (bl.h >= 80 && bl.h >= 1.1f * bl.w) blobs.add(bl) // descarta corpo caído e manchas pequenas
+        return out
     }
 
-    // cabelo loiro = só a atiradora (a linha do bloco no overlay é rosa para não confundir)
-    fun blonde(bl: Blob): Int {
-        var n = 0
-        var yy = bl.t.toInt()
-        while (yy < bl.b && yy < b.height) {
-            var xx = bl.l.toInt()
-            while (xx < bl.r && xx < b.width) {
-                val p = b.getPixel(xx, yy)
-                val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
-                if (r > 190 && g in 140..215 && bb < 120) n++
-                xx += 3
-            }
-            yy += 3
-        }
-        return n
-    }
-    var shooterBlob = blobs.maxByOrNull { blonde(it) }?.takeIf { blonde(it) >= 25 }
-    if (shooterBlob == null) // sem loiro: o mais perto da posição anterior da atiradora
-        shooterBlob = blobs.firstOrNull { abs(oldShooter.x - it.cx) < it.w / 2 + 90 && oldShooter.y > it.t - 90 && oldShooter.y < it.b + 90 }
-    val enemies = blobs.filter { it !== shooterBlob }.map { PointF(it.cx, it.t + it.h * 0.4f) }
-    val shooter = shooterBlob?.let { PointF(it.cx, (it.b - 134f).coerceAtLeast(a.top)) } // altura do cano acima do chão
+    val darks = comps(dark, 3)
+    if (darks.any { it.w > 500 || it.h > 600 }) return null // tela escurecida: vitória/transição
+
+    // atiradora = cabelo loiro perto de uma mancha escura (a mira do próprio jogo também é dourada, mas fica solta)
+    val hair = comps(gold, 1).filter { h ->
+        h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 }
+    }.maxByOrNull { it.tot }
+    // y: altura do cano em relação ao cabelo
+    val shooter = hair?.let { PointF(it.cx, it.cy + 8f) } // sem cabelo na tela: não move a atiradora
+
+    val enemies = darks.filter { d ->
+        d.h >= 80 && d.h >= 1.1f * d.w && // descarta corpo caído e manchas pequenas
+            !(shooter != null && abs(shooter.x - (d.l + d.r) / 2) < d.w / 2 + 100 && shooter.y > d.t - 100 && shooter.y < d.b + 100)
+    }.map { PointF((it.l + it.r) / 2, it.t + it.h * 0.4f) }.toMutableList()
+    comps(red, 2).filter { it.tot >= 6 }.forEach { enemies.add(PointF(it.cx, it.cy)) } // barris/cilindros explosivos
 
     // paredes: célula é tijolo se metade dos pontos tem cor de tijolo (marrom-avermelhado)
     val walls = BooleanArray(cols * rows)
     for (r in 0 until rows) for (c in 0 until cols) {
         var n = 0
         for (j in 0 until 4) for (i in 0 until 4) {
-            val x = (a.left + c * cell + i * 4 + 2).toInt(); val yy = (a.top + r * cell + j * 4 + 2).toInt()
+            val x = (a.left + c * CELL + i * 4 + 2).toInt(); val yy = (a.top + r * CELL + j * 4 + 2).toInt()
             if (x >= b.width || yy >= b.height) continue
             val p = b.getPixel(x, yy)
             val pr = (p shr 16) and 255; val pg = (p shr 8) and 255; val pb = p and 255
-            if (pr >= 110 && pr - pg >= 45 && pr - pb >= 60 && pg >= 35) n++
+            if (pr in 110..185 && pg in 48..100 && pb in 25..85 && pr - pg >= 45) n++
         }
         walls[r * cols + c] = n >= 8
     }
