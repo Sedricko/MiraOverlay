@@ -39,7 +39,7 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
     while (y < b.height) {
         var x = 6
         while (x < b.width) {
-            val inA = x > a.left + 6 && x < a.right - 6 && y > a.top + 6 && y < a.bottom - 6
+            val inA = y > a.top + 6 && y < a.bottom - 6 // só limita na vertical: inimigo no canto da arena pode passar da borda marcada
             if (inA || (y > bandT && y < bandB)) {
                 val p = b.getPixel(x, y)
                 val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
@@ -102,6 +102,7 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
         h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 }
     }
     val hair = nearDark.filter { blueBelow(it.cx, it.cy) >= 14 }.maxByOrNull { it.tot }
+        ?: golds.filter { it.tot >= 6 && it.w < 90 && it.h < 90 && blueBelow(it.cx, it.cy) >= 24 }.maxByOrNull { it.tot }
         ?: nearDark.filter { hypot(it.cx - oldShooter.x, it.cy + 8f - oldShooter.y) < 120f }
             .minByOrNull { hypot(it.cx - oldShooter.x, it.cy + 8f - oldShooter.y) }
     // y: altura do cano em relação ao cabelo
