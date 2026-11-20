@@ -62,7 +62,8 @@ class AimView(ctx: Context) : View(ctx) {
         for (i in 0 until 2000) {
             val t: Float; val axisX: Boolean
             if (tmx < tmy) { t = tmx; cx += sx; tmx += tdx; axisX = true } else { t = tmy; cy += sy; tmy += tdy; axisX = false }
-            if (cx < 0 || cy < 0 || cx >= gCols || cy >= gRows || g[cy * gCols + cx]) return (t + 0.05f) to axisX
+            if (cx < 0 || cy < 0 || cx >= gCols || cy >= gRows) return Float.MAX_VALUE to false // borda da tela não é parede: a bala sai
+            if (g[cy * gCols + cx]) return (t + 0.05f) to axisX
         }
         return Float.MAX_VALUE to false
     }
