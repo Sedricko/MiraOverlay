@@ -111,17 +111,21 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
     comps(red, 2).filter { it.tot >= 6 }.forEach { enemies.add(PointF(it.cx, it.cy)) } // barris/cilindros explosivos
 
     // paredes: célula é tijolo se metade dos pontos tem cor de tijolo (marrom-avermelhado)
-    val walls = BooleanArray(cols * rows)
-    for (r in 0 until rows) for (c in 0 until cols) {
+    // a grade passa um pouco da área: a moldura de tijolo do cenário costuma ficar logo fora dela
+    val wl = maxOf(0f, a.left - 64f); val wt = maxOf(0f, a.top - 64f)
+    val wCols = ((minOf(b.width.toFloat(), a.right + 64f) - wl) / CELL).toInt() + 1
+    val wRows = ((minOf(b.height.toFloat(), a.bottom + 64f) - wt) / CELL).toInt() + 1
+    val walls = BooleanArray(wCols * wRows)
+    for (r in 0 until wRows) for (c in 0 until wCols) {
         var n = 0
         for (j in 0 until 4) for (i in 0 until 4) {
-            val x = (a.left + c * CELL + i * 4 + 2).toInt(); val yy = (a.top + r * CELL + j * 4 + 2).toInt()
+            val x = (wl + c * CELL + i * 4 + 2).toInt(); val yy = (wt + r * CELL + j * 4 + 2).toInt()
             if (x >= b.width || yy >= b.height) continue
             val p = b.getPixel(x, yy)
             val pr = (p shr 16) and 255; val pg = (p shr 8) and 255; val pb = p and 255
             if (pr in 110..185 && pg in 48..100 && pb in 25..85 && pr - pg >= 45) n++
         }
-        walls[r * cols + c] = n >= 8
+        walls[r * wCols + c] = n >= 8
     }
-    return Detection(shooter, enemies, walls, cols, rows, a.left, a.top, cross)
+    return Detection(shooter, enemies, walls, wCols, wRows, wl, wt, cross)
 }
