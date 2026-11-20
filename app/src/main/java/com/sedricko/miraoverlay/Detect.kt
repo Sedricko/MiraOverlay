@@ -13,6 +13,7 @@ class Detection(
     val walls: BooleanArray, val cols: Int, val rows: Int, val left: Float, val top: Float,
     val crosshair: PointF?, // mira dourada que o jogo desenha onde está o seu dedo
     val tip: PointF? = null, // ponta do cano da arma
+    val barrels: List<PointF> = emptyList(), // barris explosivos (também estão em enemies)
 )
 
 private class Cl(val l: Float, val t: Float, val r: Float, val b: Float, val tot: Int, val cx: Float, val cy: Float) {
@@ -133,7 +134,8 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
         d.h >= 80 && d.h >= 1.1f * d.w && // descarta corpo caído e manchas pequenas
             !(abs(ref.x - (d.l + d.r) / 2) < d.w / 2 + 100 && ref.y > d.t - 100 && ref.y < d.b + 100)
     }.map { PointF((it.l + it.r) / 2, it.t + it.h * 0.4f) }.toMutableList()
-    comps(red, 2).filter { it.tot >= 6 }.forEach { enemies.add(PointF(it.cx, it.cy)) } // barris/cilindros explosivos
+    val barrels = comps(red, 2).filter { it.tot >= 6 }.map { PointF(it.cx, it.cy) } // barris/cilindros explosivos
+    enemies.addAll(barrels)
 
     // caixa azul (fase 2-8): não é parede; você atira nela para ela cair/rolar e acertar o alvo. Vira alvo da mira.
     // shortcut: só mira na caixa parada; não simula a queda dela, trocar por simulação de física.
@@ -182,5 +184,5 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
             if (n >= 6 && n > bestN) { bestN = n; tip = PointF(hair.cx + side * far, fy) }
         }
     }
-    return Detection(shooter, enemies, walls, wCols, wRows, wl, wt, cross, tip)
+    return Detection(shooter, enemies, walls, wCols, wRows, wl, wt, cross, tip, barrels)
 }

@@ -98,7 +98,7 @@ class OverlayService : Service() {
                         }
                         // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
                         misses = if (det.enemies.isEmpty()) misses + 1 else 0
-                        if (det.enemies.isNotEmpty() || misses >= 3) aim.updateTargets(det.enemies)
+                        if (det.enemies.isNotEmpty() || misses >= 3) aim.updateTargets(det.enemies, det.barrels)
                     }
                     aim.invalidate()
                 }

@@ -33,9 +33,14 @@ class AimView(ctx: Context) : View(ctx) {
     private val MAX_EXTRA = 6 // limite real do jogo (informado pelo usuário): 6 ricochetes
 
     /** Atualiza os alvos; se um inimigo mal se mexeu (<14px) mantém o ponto antigo, para a rota não tremer. */
-    fun updateTargets(new: List<PointF>) {
+    private var isBarrel = BooleanArray(0)
+    // barril explosivo atingido mata quem está perto (o jogo faz isso: tiro no barril + inimigo colado nele)
+    // shortcut: raio da explosão estimado de 1 print (0,30 da largura da tela), medir num vídeo de barril explodindo.
+    private val BLAST = 0.30f
+    fun updateTargets(new: List<PointF>, barrels: List<PointF> = emptyList()) {
         val old = targets
         targets = new.map { n -> old.firstOrNull { hypot(it.x - n.x, it.y - n.y) < 14f } ?: n }
+        isBarrel = BooleanArray(new.size) { k -> barrels.any { hypot(it.x - new[k].x, it.y - new[k].y) < 2f } }
         invalidate()
     }
     var onShoot: ((Float, Float) -> Unit)? = null
@@ -179,6 +184,9 @@ class AimView(ctx: Context) : View(ctx) {
             pts.add(PointF(px, py))
             if (bestT == Float.MAX_VALUE) break
             if (flipX) dx = -dx else dy = -dy
+        }
+        if (isBarrel.size == targets.size) for (k in targets.indices) if (isBarrel[k] && got[k]) {
+            for (j in targets.indices) if (alive[j] && !got[j] && hypot(targets[j].x - targets[k].x, targets[j].y - targets[k].y) < BLAST * width) got[j] = true
         }
         if (cutSeg < 0) return Triple(pts, 0, got)
         val cut = pts.subList(0, cutSeg + 1).toMutableList() // para no último inimigo atingido
