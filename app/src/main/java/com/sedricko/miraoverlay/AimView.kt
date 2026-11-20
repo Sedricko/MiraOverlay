@@ -46,7 +46,24 @@ class AimView(ctx: Context) : View(ctx) {
 
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
 
-    /** Dispara na direção dada; hit=true se passou por t (quando t != null). */
+    /** Primeira parede/bloco no caminho: distância e se a parede é vertical (inverte x). */
+    private fun next(px: Float, py: Float, dx: Float, dy: Float, area: RectF, block: RectF): Pair<Float, Boolean> {
+        var bestT = Float.MAX_VALUE; var flipX = false
+        val tx = if (dx > 0) (area.right - px) / dx else (area.left - px) / dx
+        val ty = if (dy > 0) (area.bottom - py) / dy else (area.top - py) / dy
+        if (tx > 1e-3f && tx < bestT) { bestT = tx; flipX = true }
+        if (ty > 1e-3f && ty < bestT) { bestT = ty; flipX = false }
+        if (!block.isEmpty) {
+            val bx1 = (block.left - px) / dx; val bx2 = (block.right - px) / dx
+            val by1 = (block.top - py) / dy; val by2 = (block.bottom - py) / dy
+            val enterX = min(bx1, bx2); val enterY = min(by1, by2)
+            val enter = max(enterX, enterY); val exit = min(max(bx1, bx2), max(by1, by2))
+            if (enter > 1e-3f && enter < exit && enter < bestT) { bestT = enter; flipX = enterX > enterY }
+        }
+        return bestT to flipX
+    }
+
+    /** Dispara na direção dada; hit=true (e d=distância) se o tiro passa por t. */
     private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?): Triple<List<PointF>, Boolean, Float> {
         val pts = mutableListOf(PointF(origin.x, origin.y))
         var px = origin.x; var py = origin.y
@@ -54,21 +71,7 @@ class AimView(ctx: Context) : View(ctx) {
         for (i in 0..bounces) {
             if (abs(dx) < 1e-6f) dx = 1e-6f
             if (abs(dy) < 1e-6f) dy = 1e-6f
-            var bestT = Float.MAX_VALUE; var flipX = false
-
-            val tx = if (dx > 0) (area.right - px) / dx else (area.left - px) / dx
-            val ty = if (dy > 0) (area.bottom - py) / dy else (area.top - py) / dy
-            if (tx > 1e-3f && tx < bestT) { bestT = tx; flipX = true }
-            if (ty > 1e-3f && ty < bestT) { bestT = ty; flipX = false }
-
-            if (!block.isEmpty) {
-                val bx1 = (block.left - px) / dx; val bx2 = (block.right - px) / dx
-                val by1 = (block.top - py) / dy; val by2 = (block.bottom - py) / dy
-                val enterX = min(bx1, bx2); val enterY = min(by1, by2)
-                val enter = max(enterX, enterY); val exit = min(max(bx1, bx2), max(by1, by2))
-                if (enter > 1e-3f && enter < exit && enter < bestT) { bestT = enter; flipX = enterX > enterY }
-            }
-
+            val (bestT, flipX) = next(px, py, dx, dy, area, block)
             val segLen = if (bestT == Float.MAX_VALUE) 4000f else bestT
             if (t != null) {
                 val proj = ((t.x - px) * dx + (t.y - py) * dy).coerceIn(0f, segLen)
@@ -84,15 +87,50 @@ class AimView(ctx: Context) : View(ctx) {
         return Triple(pts, false, 0f)
     }
 
-    /** Varre 360° e devolve até 3 rotas que acertam o inimigo (menos ricochetes primeiro), cada uma com o ponto de mira. */
-    private fun solve(): List<Pair<List<PointF>, PointF>> {
+    /** Tiro que atravessa: caminho completo e quantos inimigos ele atinge. */
+    private fun traceAll(dirX: Float, dirY: Float, area: RectF, block: RectF): Pair<List<PointF>, Int> {
+        val pts = mutableListOf(PointF(origin.x, origin.y))
+        val got = BooleanArray(targets.size)
+        var px = origin.x; var py = origin.y
+        var dx = dirX; var dy = dirY
+        for (i in 0..bounces) {
+            if (abs(dx) < 1e-6f) dx = 1e-6f
+            if (abs(dy) < 1e-6f) dy = 1e-6f
+            val (bestT, flipX) = next(px, py, dx, dy, area, block)
+            val segLen = if (bestT == Float.MAX_VALUE) 4000f else bestT
+            targets.forEachIndexed { k, t ->
+                val proj = ((t.x - px) * dx + (t.y - py) * dy).coerceIn(0f, segLen)
+                if (hypot(px + dx * proj - t.x, py + dy * proj - t.y) < hitRadius) got[k] = true
+            }
+            px += dx * segLen; py += dy * segLen
+            pts.add(PointF(px, py))
+            if (bestT == Float.MAX_VALUE) break
+            if (flipX) dx = -dx else dy = -dy
+        }
+        return pts to got.count { it }
+    }
+
+    private fun aimOf(ang: Float) = PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f)
+
+    /**
+     * Rotas: a melhor para cada inimigo (cor 0 = menos ricochetes, 1 = as outras)
+     * e, se existir, uma que acerta todos de uma vez (cor 2, vale se a bala atravessar).
+     */
+    private fun solve(): List<Triple<List<PointF>, PointF, Int>> {
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
-        val cands = mutableListOf<Pair<List<PointF>, Float>>()
+        val per = mutableListOf<Pair<List<PointF>, PointF>>()
         for (t in targets) {
+            var best: Triple<List<PointF>, Float, Float>? = null // pts, ang, distância ao centro
             val cluster = mutableListOf<Triple<List<PointF>, Float, Float>>()
             var last = -1000
-            // escolhe o ângulo que passa mais perto do centro do inimigo
-            fun flush() { cluster.minByOrNull { it.third }?.let { cands.add(it.first to it.second) }; cluster.clear() }
+            // dentro de um grupo de ângulos que acertam, o que passa mais perto do centro do inimigo
+            fun flush() {
+                cluster.minByOrNull { it.third }?.let { c ->
+                    val b = best
+                    if (b == null || c.first.size < b.first.size || (c.first.size == b.first.size && c.third < b.third)) best = c
+                }
+                cluster.clear()
+            }
             for (a in 0 until 3600) {
                 val ang = a * (2 * Math.PI / 3600).toFloat()
                 val (pts, hit, d) = trace(cos(ang), sin(ang), area, block, t)
@@ -101,16 +139,27 @@ class AimView(ctx: Context) : View(ctx) {
                 cluster.add(Triple(pts, ang, d)); last = a
             }
             flush()
+            best?.let { per.add(it.first to aimOf(it.second)) }
         }
-        return cands.sortedBy { it.first.size }.take(3)
-            .map { (pts, ang) -> pts to PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f) }
+        val out = per.sortedBy { it.first.size }.mapIndexed { i, r -> Triple(r.first, r.second, if (i == 0) 0 else 1) }.toMutableList()
+        if (targets.size >= 2) {
+            var run = mutableListOf<Float>(); var all: Pair<List<PointF>, Float>? = null
+            for (a in 0..3600) {
+                val ang = a * (2 * Math.PI / 3600).toFloat()
+                if (a < 3600 && traceAll(cos(ang), sin(ang), area, block).second == targets.size) { run.add(ang); continue }
+                if (run.isNotEmpty() && all == null) { val m = run[run.size / 2]; all = traceAll(cos(m), sin(m), area, block).first to m }
+                run = mutableListOf()
+            }
+            all?.let { out.add(Triple(it.first, aimOf(it.second), 2)) }
+        }
+        return out
     }
 
     override fun onDraw(c: Canvas) {
         c.translate(-offX, -offY) // desenha em coordenadas de tela
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         dash.color = 0xFF34C759.toInt(); c.drawRect(area, dash)
-        dash.color = 0xFFFFCC00.toInt(); c.drawRect(block, dash)
+        dash.color = 0xFFFF6BD6.toInt(); c.drawRect(block, dash)
 
         line.color = 0xFF34C759.toInt()
         for (t in targets) c.drawCircle(t.x, t.y, 50f, line) // inimigos reconhecidos
@@ -128,9 +177,9 @@ class AimView(ctx: Context) : View(ctx) {
             return
         }
         // guia: rotas que acertam; o ponto azul é onde apontar no jogo
-        solve().forEachIndexed { i, (pts, aim) ->
-            line.color = if (i == 0) 0xFF34C759.toInt() else 0xFF00C7FF.toInt()
-            line.strokeWidth = if (i == 0) 6f else 4f
+        solve().sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
+            line.color = when (kind) { 0 -> 0xFF34C759.toInt(); 1 -> 0xFF00C7FF.toInt(); else -> 0xFFFF7000.toInt() }
+            line.strokeWidth = if (kind == 1) 4f else 6f
             drawPath(c, pts)
             dot.color = 0xFF0A84FF.toInt(); c.drawCircle(aim.x, aim.y, 14f, dot)
         }

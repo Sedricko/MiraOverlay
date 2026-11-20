@@ -39,6 +39,9 @@ class Handle(
 
     override fun onDraw(c: Canvas) { c.drawCircle(half.toFloat(), half.toFloat(), 40f, paint) }
 
+    /** Reposiciona a janelinha quando o ponto muda sozinho (detecção da atiradora). */
+    fun refresh() { lp.x = (p.x - half).toInt(); lp.y = (p.y - half).toInt(); wm.updateViewLayout(this, lp) }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (e.actionMasked == MotionEvent.ACTION_MOVE) {
             p.set(e.rawX, e.rawY)
@@ -55,6 +58,7 @@ class OverlayService : Service() {
     private lateinit var aim: AimView
     private lateinit var aimParams: LP
     private lateinit var panel: LinearLayout
+    private lateinit var originHandle: Handle
     private val wallHandles = mutableListOf<Handle>()
     private val allHandles = mutableListOf<Handle>()
     private val ui = Handler(Looper.getMainLooper())
@@ -80,8 +84,10 @@ class OverlayService : Service() {
                 if (bmp != null) {
                     val a = android.graphics.RectF(minOf(aim.areaA.x, aim.areaB.x), minOf(aim.areaA.y, aim.areaB.y),
                         maxOf(aim.areaA.x, aim.areaB.x), maxOf(aim.areaA.y, aim.areaB.y))
-                    val found = findTargets(bmp, a, aim.origin)
+                    val det = findTargets(bmp, a, aim.origin)
+                    val found = det.enemies
                     bmp.recycle()
+                    det.shooter?.let { aim.origin.set(it.x, it.y); originHandle.refresh() } // acha a atiradora sozinho
                     // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
                     misses = if (found.isEmpty()) misses + 1 else 0
                     if (found.isNotEmpty() || misses >= 3) aim.targets = found
@@ -132,10 +138,11 @@ class OverlayService : Service() {
         val sync = { syncWindow() }
         wallHandles += Handle(this, wm, aim.areaA, 0xFF34C759.toInt(), sync)
         wallHandles += Handle(this, wm, aim.areaB, 0xFF34C759.toInt(), sync)
-        wallHandles += Handle(this, wm, aim.blockA, 0xFFFFCC00.toInt(), sync)
-        wallHandles += Handle(this, wm, aim.blockB, 0xFFFFCC00.toInt(), sync)
+        wallHandles += Handle(this, wm, aim.blockA, 0xFFFF6BD6.toInt(), sync)
+        wallHandles += Handle(this, wm, aim.blockB, 0xFFFF6BD6.toInt(), sync)
         allHandles += wallHandles
-        allHandles += Handle(this, wm, aim.origin, 0xFF0A84FF.toInt(), sync)
+        originHandle = Handle(this, wm, aim.origin, 0xFF0A84FF.toInt(), sync)
+        allHandles += originHandle
 
         fun btn(t: String) = Button(this).apply { text = t; textSize = 12f; minWidth = 0; minimumWidth = 0 }
         val wallsBtn = btn("Paredes")
