@@ -72,12 +72,29 @@ class OverlayService : Service() {
         aim.invalidate()
     }
 
+    private var shooting = false
+    private val scan = object : Runnable {
+        override fun run() {
+            if (aim.autoMode && aim.visibility == View.VISIBLE && !shooting) AimA11y.instance?.snap { bmp ->
+                if (bmp != null) {
+                    val a = android.graphics.RectF(minOf(aim.areaA.x, aim.areaB.x), minOf(aim.areaA.y, aim.areaB.y),
+                        maxOf(aim.areaA.x, aim.areaB.x), maxOf(aim.areaA.y, aim.areaB.y))
+                    aim.targets = findTargets(bmp, a, aim.origin)
+                    bmp.recycle()
+                    aim.invalidate()
+                }
+            }
+            ui.postDelayed(this, 1000)
+        }
+    }
+
     private fun shoot(x: Float, y: Float) {
         val s = AimA11y.instance
         if (s == null) {
             Toast.makeText(this, "Ative \"Mira Overlay\" em Acessibilidade", Toast.LENGTH_LONG).show()
             return
         }
+        shooting = true
         // a mira precisa sair do caminho, senão o toque cairia nela mesma
         aimParams.flags = base or LP.FLAG_NOT_TOUCHABLE
         wm.updateViewLayout(aim, aimParams)
@@ -85,6 +102,7 @@ class OverlayService : Service() {
             s.tap(x, y) {
                 aimParams.flags = base
                 wm.updateViewLayout(aim, aimParams)
+                shooting = false
             }
         }, 60)
     }
@@ -114,10 +132,17 @@ class OverlayService : Service() {
         allHandles += wallHandles
         allHandles += Handle(this, wm, aim.origin, 0xFF0A84FF.toInt(), sync)
 
-        val wallsBtn = Button(this).apply { text = "Paredes" }
-        val bounceBtn = Button(this).apply { text = "Ric: ${aim.bounces}" }
-        val onOffBtn = Button(this).apply { text = "On/Off" }
-        val closeBtn = Button(this).apply { text = "X" }
+        fun btn(t: String) = Button(this).apply { text = t; textSize = 12f; minWidth = 0; minimumWidth = 0 }
+        val wallsBtn = btn("Paredes")
+        val bounceBtn = btn("Ric: ${aim.bounces}")
+        val autoBtn = btn("Auto: On")
+        val onOffBtn = btn("On/Off")
+        val closeBtn = btn("X")
+        autoBtn.setOnClickListener {
+            aim.autoMode = !aim.autoMode
+            autoBtn.text = if (aim.autoMode) "Auto: On" else "Auto: Off"
+            aim.invalidate()
+        }
         wallsBtn.setOnClickListener {
             val v = if (wallHandles[0].visibility == View.VISIBLE) View.GONE else View.VISIBLE
             wallHandles.forEach { it.visibility = v }
@@ -134,14 +159,16 @@ class OverlayService : Service() {
 
         panel = LinearLayout(this).apply {
             setBackgroundColor(0xCC000000.toInt())
-            addView(wallsBtn); addView(bounceBtn); addView(onOffBtn); addView(closeBtn)
+            addView(wallsBtn); addView(bounceBtn); addView(autoBtn); addView(onOffBtn); addView(closeBtn)
         }
         wm.addView(panel, LP(LP.WRAP_CONTENT, LP.WRAP_CONTENT, LP.TYPE_APPLICATION_OVERLAY,
             LP.FLAG_NOT_FOCUSABLE or LP.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT)
             .apply { gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; y = 330 })
+        ui.post(scan)
     }
 
     override fun onDestroy() {
+        ui.removeCallbacksAndMessages(null)
         allHandles.forEach { wm.removeView(it) }
         wm.removeView(aim)
         wm.removeView(panel)

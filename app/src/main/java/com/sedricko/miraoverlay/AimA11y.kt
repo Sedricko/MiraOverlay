@@ -3,10 +3,13 @@ package com.sedricko.miraoverlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Path
+import android.os.Build
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 
-/** Só serve para tocar no jogo (onde o dedo soltou a mira). */
+/** Toca no jogo (atirar) e tira print da tela (achar o inimigo). */
 class AimA11y : AccessibilityService() {
     companion object { var instance: AimA11y? = null }
 
@@ -23,5 +26,19 @@ class AimA11y : AccessibilityService() {
             override fun onCancelled(d: GestureDescription?) = done()
         }
         if (!dispatchGesture(g, cb, null)) done()
+    }
+
+    /** Print da tela inteira (Android 11+); devolve null se falhar. */
+    fun snap(cb: (Bitmap?) -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) { cb(null); return }
+        takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            override fun onSuccess(r: ScreenshotResult) {
+                val hb = r.hardwareBuffer
+                val bmp = Bitmap.wrapHardwareBuffer(hb, r.colorSpace)?.copy(Bitmap.Config.ARGB_8888, false)
+                hb.close()
+                cb(bmp)
+            }
+            override fun onFailure(errorCode: Int) = cb(null)
+        })
     }
 }
