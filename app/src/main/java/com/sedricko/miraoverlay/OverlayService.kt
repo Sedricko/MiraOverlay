@@ -168,7 +168,7 @@ class OverlayService : Service() {
             wallHandles.forEach { it.visibility = v }
         }
         bounceBtn.setOnClickListener {
-            aim.bounces = if (aim.bounces >= 8) 0 else aim.bounces + 1
+            aim.bounces = if (aim.bounces >= 6) 0 else aim.bounces + 1
             bounceBtn.text = "Ric: ${aim.bounces}"
         }
         onOffBtn.setOnClickListener { // desligado: nada na tela captura toque (menus, vitória, etc.)

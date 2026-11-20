@@ -30,7 +30,7 @@ class AimView(ctx: Context) : View(ctx) {
         private set
     private val shotLocks = mutableListOf<Float?>() // ângulo travado de cada tiro do plano
     private var extraLock: Float? = null
-    private val MAX_EXTRA = 6 // shortcut: até quantos ricochetes buscar um tiro que mate mais gente; o limite real do jogo não foi medido
+    private val MAX_EXTRA = 6 // limite real do jogo (informado pelo usuário): 6 ricochetes
 
     /** Atualiza os alvos; se um inimigo mal se mexeu (<14px) mantém o ponto antigo, para a rota não tremer. */
     fun updateTargets(new: List<PointF>) {
