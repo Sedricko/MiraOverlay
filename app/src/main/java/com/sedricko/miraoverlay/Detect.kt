@@ -6,7 +6,11 @@ import android.graphics.RectF
 import kotlin.math.abs
 import kotlin.math.max
 
-class Detection(val shooter: PointF?, val enemies: List<PointF>)
+/** walls: grade de células de 16px a partir de (left,top); true = parede de tijolo. */
+class Detection(
+    val shooter: PointF?, val enemies: List<PointF>,
+    val walls: BooleanArray, val cols: Int, val rows: Int, val left: Float, val top: Float,
+)
 
 private class Blob(val l: Float, val t: Float, val r: Float, val b: Float) {
     val w get() = r - l
@@ -75,5 +79,19 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection {
         shooterBlob = blobs.firstOrNull { abs(oldShooter.x - it.cx) < it.w / 2 + 90 && oldShooter.y > it.t - 90 && oldShooter.y < it.b + 90 }
     val enemies = blobs.filter { it !== shooterBlob }.map { PointF(it.cx, it.t + it.h * 0.4f) }
     val shooter = shooterBlob?.let { PointF(it.cx, (it.b - 134f).coerceAtLeast(a.top)) } // altura do cano acima do chão
-    return Detection(shooter, enemies)
+
+    // paredes: célula é tijolo se metade dos pontos tem cor de tijolo (marrom-avermelhado)
+    val walls = BooleanArray(cols * rows)
+    for (r in 0 until rows) for (c in 0 until cols) {
+        var n = 0
+        for (j in 0 until 4) for (i in 0 until 4) {
+            val x = (a.left + c * cell + i * 4 + 2).toInt(); val yy = (a.top + r * cell + j * 4 + 2).toInt()
+            if (x >= b.width || yy >= b.height) continue
+            val p = b.getPixel(x, yy)
+            val pr = (p shr 16) and 255; val pg = (p shr 8) and 255; val pb = p and 255
+            if (pr >= 110 && pr - pg >= 45 && pr - pb >= 60 && pg >= 35) n++
+        }
+        walls[r * cols + c] = n >= 8
+    }
+    return Detection(shooter, enemies, walls, cols, rows, a.left, a.top)
 }

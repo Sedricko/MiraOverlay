@@ -34,6 +34,27 @@ class AimView(ctx: Context) : View(ctx) {
     val areaA = PointF(); val areaB = PointF()
     val blockA = PointF(); val blockB = PointF()
     private var aimPt: PointF? = null
+    private var walls: BooleanArray? = null // paredes lidas do print; sem elas usa a área + bloco manuais
+    private var gCols = 0; private var gRows = 0; private var gx0 = 0f; private var gy0 = 0f
+    private val cell = 16f
+
+    fun setWalls(d: Detection) { walls = d.walls; gCols = d.cols; gRows = d.rows; gx0 = d.left; gy0 = d.top }
+
+    /** Primeira parede na grade (DDA): distância e se a parede é vertical (inverte x). */
+    private fun nextGrid(g: BooleanArray, px: Float, py: Float, dx: Float, dy: Float): Pair<Float, Boolean> {
+        val lx = px + dx * 0.05f - gx0; val ly = py + dy * 0.05f - gy0 // sai um pouco da parede para não colar nela
+        var cx = kotlin.math.floor(lx / cell).toInt(); var cy = kotlin.math.floor(ly / cell).toInt()
+        val sx = if (dx > 0) 1 else -1; val sy = if (dy > 0) 1 else -1
+        val tdx = abs(cell / dx); val tdy = abs(cell / dy)
+        var tmx = ((if (dx > 0) (cx + 1) * cell else cx * cell) - lx) / dx
+        var tmy = ((if (dy > 0) (cy + 1) * cell else cy * cell) - ly) / dy
+        for (i in 0 until 2000) {
+            val t: Float; val axisX: Boolean
+            if (tmx < tmy) { t = tmx; cx += sx; tmx += tdx; axisX = true } else { t = tmy; cy += sy; tmy += tdy; axisX = false }
+            if (cx < 0 || cy < 0 || cx >= gCols || cy >= gRows || g[cy * gCols + cx]) return (t + 0.05f) to axisX
+        }
+        return Float.MAX_VALUE to false
+    }
 
     private val hitRadius = 45f
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -48,6 +69,7 @@ class AimView(ctx: Context) : View(ctx) {
 
     /** Primeira parede/bloco no caminho: distância e se a parede é vertical (inverte x). */
     private fun next(px: Float, py: Float, dx: Float, dy: Float, area: RectF, block: RectF): Pair<Float, Boolean> {
+        walls?.let { return nextGrid(it, px, py, dx, dy) }
         var bestT = Float.MAX_VALUE; var flipX = false
         val tx = if (dx > 0) (area.right - px) / dx else (area.left - px) / dx
         val ty = if (dy > 0) (area.bottom - py) / dy else (area.top - py) / dy
@@ -159,7 +181,7 @@ class AimView(ctx: Context) : View(ctx) {
         c.translate(-offX, -offY) // desenha em coordenadas de tela
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         dash.color = 0xFF34C759.toInt(); c.drawRect(area, dash)
-        dash.color = 0xFFFF6BD6.toInt(); c.drawRect(block, dash)
+        if (walls == null) { dash.color = 0xFFFF6BD6.toInt(); c.drawRect(block, dash) }
 
         line.color = 0xFF34C759.toInt()
         for (t in targets) c.drawCircle(t.x, t.y, 50f, line) // inimigos reconhecidos
