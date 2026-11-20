@@ -47,7 +47,7 @@ class AimView(ctx: Context) : View(ctx) {
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
 
     /** Dispara na direção dada; hit=true se passou por t (quando t != null). */
-    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?): Pair<List<PointF>, Boolean> {
+    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?): Triple<List<PointF>, Boolean, Float> {
         val pts = mutableListOf(PointF(origin.x, origin.y))
         var px = origin.x; var py = origin.y
         var dx = dirX; var dy = dirY
@@ -73,14 +73,15 @@ class AimView(ctx: Context) : View(ctx) {
             if (t != null) {
                 val proj = ((t.x - px) * dx + (t.y - py) * dy).coerceIn(0f, segLen)
                 val cx = px + dx * proj; val cy = py + dy * proj
-                if (hypot(cx - t.x, cy - t.y) < hitRadius) { pts.add(PointF(cx, cy)); return pts to true }
+                val d = hypot(cx - t.x, cy - t.y)
+                if (d < hitRadius) { pts.add(PointF(cx, cy)); return Triple(pts, true, d) }
             }
             px += dx * segLen; py += dy * segLen
             pts.add(PointF(px, py))
             if (bestT == Float.MAX_VALUE) break
             if (flipX) dx = -dx else dy = -dy
         }
-        return pts to false
+        return Triple(pts, false, 0f)
     }
 
     /** Varre 360° e devolve até 3 rotas que acertam o inimigo (menos ricochetes primeiro), cada uma com o ponto de mira. */
@@ -88,15 +89,16 @@ class AimView(ctx: Context) : View(ctx) {
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         val cands = mutableListOf<Pair<List<PointF>, Float>>()
         for (t in targets) {
-            val cluster = mutableListOf<Pair<List<PointF>, Float>>()
+            val cluster = mutableListOf<Triple<List<PointF>, Float, Float>>()
             var last = -1000
-            fun flush() { if (cluster.isNotEmpty()) cands.add(cluster[cluster.size / 2]); cluster.clear() }
+            // escolhe o ângulo que passa mais perto do centro do inimigo
+            fun flush() { cluster.minByOrNull { it.third }?.let { cands.add(it.first to it.second) }; cluster.clear() }
             for (a in 0 until 3600) {
                 val ang = a * (2 * Math.PI / 3600).toFloat()
-                val (pts, hit) = trace(cos(ang), sin(ang), area, block, t)
+                val (pts, hit, d) = trace(cos(ang), sin(ang), area, block, t)
                 if (!hit) continue
                 if (a - last > 30) flush() // mais de 3° de diferença = rota diferente
-                cluster.add(pts to ang); last = a
+                cluster.add(Triple(pts, ang, d)); last = a
             }
             flush()
         }
