@@ -30,18 +30,24 @@ private const val CELL = 16
  * shortcut: heurística de cor; fases de fundo escuro ou inimigo loiro podem falhar, trocar por template matching.
  */
 fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
-    val cols = (a.width() / CELL).toInt() + 1; val rows = (a.height() / CELL).toInt() + 1
+    // varre a tela toda: a mira dourada costuma ficar FORA da área (dedo abaixo da arena). Fora da área só conta
+    // o dourado, e só na faixa do meio (o topo e a base têm balas/botões dourados do jogo).
+    val cols = (b.width / CELL) + 1; val rows = (b.height / CELL) + 1
     val dark = IntArray(cols * rows); val gold = IntArray(cols * rows); val red = IntArray(cols * rows)
-    var y = a.top.toInt() + 6
-    while (y < a.bottom - 6 && y < b.height) {
-        var x = a.left.toInt() + 6
-        while (x < a.right - 6 && x < b.width) {
-            val p = b.getPixel(x, y)
-            val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
-            val i = ((y - a.top) / CELL).toInt() * cols + ((x - a.left) / CELL).toInt()
-            if (max(max(r, g), bb) < 75) dark[i]++
-            if (r > 190 && g in 140..215 && bb < 120) gold[i]++
-            if (r > 170 && g < 80 && bb < 80) red[i]++
+    val bandT = b.height * 0.18f; val bandB = b.height * 0.80f
+    var y = 6
+    while (y < b.height) {
+        var x = 6
+        while (x < b.width) {
+            val inA = x > a.left + 6 && x < a.right - 6 && y > a.top + 6 && y < a.bottom - 6
+            if (inA || (y > bandT && y < bandB)) {
+                val p = b.getPixel(x, y)
+                val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
+                val i = (y / CELL) * cols + (x / CELL)
+                if (inA && max(max(r, g), bb) < 75) dark[i]++
+                if (r > 190 && g in 140..215 && bb < 120) gold[i]++
+                if (inA && r > 170 && g < 80 && bb < 80) red[i]++
+            }
             x += 4
         }
         y += 4
@@ -65,8 +71,8 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
                     if (!seen[n] && cnt[n] >= th) { seen[n] = true; stack.add(n) }
                 }
             }
-            out.add(Cl(a.left + minC * CELL, a.top + minR * CELL, a.left + (maxC + 1) * CELL, a.top + (maxR + 1) * CELL,
-                tot, a.left + (sx / tot + .5f) * CELL, a.top + (sy / tot + .5f) * CELL))
+            out.add(Cl(minC * CELL.toFloat(), minR * CELL.toFloat(), (maxC + 1) * CELL.toFloat(), (maxR + 1) * CELL.toFloat(),
+                tot, (sx / tot + .5f) * CELL, (sy / tot + .5f) * CELL))
         }
         return out
     }

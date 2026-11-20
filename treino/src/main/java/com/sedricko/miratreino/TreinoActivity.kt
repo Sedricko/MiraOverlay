@@ -10,6 +10,7 @@ class TreinoActivity : Activity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (android.os.Build.VERSION.SDK_INT >= 28) window.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES // sem faixa preta no recorte da câmera
         val w = WebView(this)
         w.settings.javaScriptEnabled = true
         w.setBackgroundColor(0xFF15110F.toInt())
