@@ -28,8 +28,7 @@ class AimView(ctx: Context) : View(ctx) {
     var crosshair: PointF? = null // mira do jogo (detectada no print): mostramos para onde a bala vai
     var targets: List<PointF> = emptyList()
         private set
-    private var locks = listOf<Pair<PointF, Float>>() // (inimigo, ângulo da rota travada)
-    private var multiLock: Float? = null
+    private val shotLocks = mutableListOf<Float?>() // ângulo travado de cada tiro do plano
     private var extraLock: Float? = null
     private val MAX_EXTRA = 6 // shortcut: até quantos ricochetes buscar um tiro que mate mais gente; o limite real do jogo não foi medido
 
@@ -123,98 +122,95 @@ class AimView(ctx: Context) : View(ctx) {
         return Triple(pts, false, 0f)
     }
 
-    /** Tiro que atravessa: caminho completo e quantos inimigos ele atinge. */
-    private fun traceAll(dirX: Float, dirY: Float, area: RectF, block: RectF, nb: Int = bounces): Pair<List<PointF>, Int> {
+    /** Tiro que atravessa os inimigos vivos: caminho até o último acerto, quantos acerta e quais. */
+    private fun traceAll(dirX: Float, dirY: Float, area: RectF, block: RectF, nb: Int, alive: BooleanArray): Triple<List<PointF>, Int, BooleanArray> {
         val pts = mutableListOf(PointF(origin.x, origin.y))
         val got = BooleanArray(targets.size)
         var px = origin.x; var py = origin.y
         var dx = dirX; var dy = dirY
+        var cutSeg = -1; var cutProj = 0f; var cutX = 0f; var cutY = 0f; var cutDx = 0f; var cutDy = 0f
         for (i in 0..nb) {
             if (abs(dx) < 1e-6f) dx = 1e-6f
             if (abs(dy) < 1e-6f) dy = 1e-6f
             val (bestT, flipX) = next(px, py, dx, dy, area, block)
             val segLen = if (bestT == Float.MAX_VALUE) 4000f else bestT
             targets.forEachIndexed { k, t ->
+                if (!alive[k]) return@forEachIndexed
                 val proj = ((t.x - px) * dx + (t.y - py) * dy).coerceIn(0f, segLen)
-                if (hypot(px + dx * proj - t.x, py + dy * proj - t.y) < hitRadius) got[k] = true
+                if (hypot(px + dx * proj - t.x, py + dy * proj - t.y) < hitRadius) {
+                    got[k] = true
+                    if (cutSeg != i) { cutSeg = i; cutProj = proj; cutX = px; cutY = py; cutDx = dx; cutDy = dy } else if (proj > cutProj) cutProj = proj
+                }
             }
             px += dx * segLen; py += dy * segLen
             pts.add(PointF(px, py))
             if (bestT == Float.MAX_VALUE) break
             if (flipX) dx = -dx else dy = -dy
         }
-        return pts to got.count { it }
+        if (cutSeg < 0) return Triple(pts, 0, got)
+        val cut = pts.subList(0, cutSeg + 1).toMutableList() // para no último inimigo atingido
+        cut.add(PointF(cutX + cutDx * cutProj, cutY + cutDy * cutProj))
+        return Triple(cut, got.count { it }, got)
     }
 
-    /** Ângulo que acerta mais inimigos (>=2) com até nb ricochetes; mantém o travado se ainda acerta o máximo. */
-    private fun bestMulti(nb: Int, area: RectF, block: RectF, lock: Float?): Pair<Float, Int>? {
-        val n = 3600; val cnt = IntArray(n); val len = IntArray(n)
-        for (a in 0 until n) { val g = a * (2 * Math.PI / n).toFloat(); val (p, c) = traceAll(cos(g), sin(g), area, block, nb); cnt[a] = c; len[a] = p.size }
-        val best = cnt.max(); if (best < 2) return null
-        if (lock != null) { val i = (lock / (2 * Math.PI.toFloat()) * n).toInt().coerceIn(0, n - 1); if (cnt[i] == best) return lock to best }
-        val minLen = (0 until n).filter { cnt[it] == best }.minOf { len[it] }
-        val idx = (0 until n).filter { cnt[it] == best && len[it] == minLen }
+    private class Route(val ang: Float, val count: Int, val pts: List<PointF>, val hit: BooleanArray, val width: Int)
+
+    /**
+     * Todos os caminhos distintos que acertam o MAIOR número de inimigos vivos com até nb ricochetes.
+     * Ordem: mais acertos; depois só rotas com folga de mira (>= 0,5°) e menos ricochetes; depois a mais larga.
+     */
+    private fun routesFor(nb: Int, area: RectF, block: RectF, alive: BooleanArray): List<Route> {
+        val n = 3600; val cnt = IntArray(n)
+        for (a in 0 until n) { val g = a * (2 * Math.PI / n).toFloat(); cnt[a] = traceAll(cos(g), sin(g), area, block, nb, alive).second }
+        val best = cnt.max(); if (best == 0) return emptyList()
         val runs = mutableListOf<MutableList<Int>>()
-        for (i in idx) if (runs.isNotEmpty() && i - runs.last().last() <= 30) runs.last().add(i) else runs.add(mutableListOf(i))
-        val r = runs.maxByOrNull { it.size }!!
-        return r[r.size / 2] * (2 * Math.PI / n).toFloat() to best
+        for (a in 0 until n) if (cnt[a] == best) { if (runs.isNotEmpty() && a - runs.last().last() <= 8) runs.last().add(a) else runs.add(mutableListOf(a)) }
+        val routes = runs.map { r ->
+            val a = r[r.size / 2]; val g = a * (2 * Math.PI / n).toFloat()
+            val (p, c, h) = traceAll(cos(g), sin(g), area, block, nb, alive)
+            Route(g, c, p, h, r.size)
+        }
+        return routes.sortedWith(compareBy({ if (it.width >= 5) 0 else 1 }, { if (it.width >= 5) it.pts.size else 0 }, { -it.width }))
     }
-
-    private fun aimOf(ang: Float) = PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f)
 
     private fun angDiff(a: Float, b: Float): Float {
         val d = abs(a - b) % (2 * Math.PI.toFloat())
         return min(d, 2 * Math.PI.toFloat() - d)
     }
 
+    private fun aimOf(ang: Float) = PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f)
+
     /**
-     * Rotas: a melhor para cada inimigo (cor 0 = menos ricochetes, 1 = as outras)
-     * e, se existir, uma que acerta todos de uma vez (cor 2, vale se a bala atravessar).
-     * A rota fica TRAVADA enquanto continuar acertando; só troca quando deixa de acertar.
+     * Plano para matar TODOS os inimigos gastando o mínimo de tiros: cada tiro mata o máximo possível de inimigos
+     * (a bala atravessa) e o próximo cuida dos que sobraram.
+     * kind 0 = tiro 1; 1 = tiros seguintes; 2 = caminhos alternativos para o tiro 1; 3 = tiro 1 com mais ricochetes que o Ric.
+     * A rota de cada tiro fica TRAVADA enquanto continuar acertando o mesmo tanto; recalcula a cada leitura da tela,
+     * então acompanha o atirador quando ele se mexe.
      */
     private fun solve(): List<Triple<List<PointF>, PointF, Int>> {
+        if (targets.isEmpty()) { shotLocks.clear(); extraLock = null; return emptyList() }
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
-        val per = mutableListOf<Pair<List<PointF>, PointF>>()
-        val newLocks = mutableListOf<Pair<PointF, Float>>()
-        for (t in targets) {
-            val oldAng = locks.firstOrNull { hypot(it.first.x - t.x, it.first.y - t.y) < 40f }?.second
-            var route: Pair<List<PointF>, Float>? = null
-            if (oldAng != null) { // a rota travada ainda acerta?
-                val (pts, hit, _) = trace(cos(oldAng), sin(oldAng), area, block, t)
-                if (hit) route = pts to oldAng
-            }
-            if (route == null) {
-                val reps = mutableListOf<Triple<List<PointF>, Float, Float>>() // pts, ang, distância ao centro
-                val cluster = mutableListOf<Triple<List<PointF>, Float, Float>>()
-                var last = -1000
-                // dentro de um grupo de ângulos que acertam, o que passa mais perto do centro do inimigo
-                fun flush() { cluster.minByOrNull { it.third }?.let { reps.add(it) }; cluster.clear() }
-                for (a in 0 until 3600) {
-                    val ang = a * (2 * Math.PI / 3600).toFloat()
-                    val (pts, hit, d) = trace(cos(ang), sin(ang), area, block, t)
-                    if (!hit) continue
-                    if (a - last > 30) flush() // mais de 3° de diferença = rota diferente
-                    cluster.add(Triple(pts, ang, d)); last = a
-                }
-                flush()
-                // menos ricochetes; empate: a mais parecida com a anterior (ou a mais central)
-                reps.minWithOrNull(compareBy({ it.first.size }, { if (oldAng != null) angDiff(it.second, oldAng) else it.third }))
-                    ?.let { route = it.first to it.second }
-            }
-            route?.let { per.add(it.first to aimOf(it.second)); newLocks.add(t to it.second) }
+        val out = mutableListOf<Triple<List<PointF>, PointF, Int>>()
+        val alive = BooleanArray(targets.size) { true }
+        var first: Route? = null
+        for (shot in 0 until 5) {
+            if (alive.none { it }) break
+            val routes = routesFor(bounces, area, block, alive)
+            if (routes.isEmpty()) break
+            val lock = shotLocks.getOrNull(shot)
+            val pick = routes.firstOrNull { lock != null && angDiff(it.ang, lock) < 0.03f } ?: routes.first()
+            while (shotLocks.size <= shot) shotLocks.add(null)
+            shotLocks[shot] = pick.ang
+            out.add(Triple(pick.pts, aimOf(pick.ang), if (shot == 0) 0 else 1))
+            if (shot == 0) { first = pick; routes.filter { it !== pick }.take(3).forEach { out.add(Triple(it.pts, aimOf(it.ang), 2)) } }
+            pick.hit.forEachIndexed { k, h -> if (h) alive[k] = false }
         }
-        locks = newLocks
-        val out = per.sortedBy { it.first.size }.mapIndexed { i, r -> Triple(r.first, r.second, if (i == 0) 0 else 1) }.toMutableList()
-        if (targets.size >= 2) {
-            // o tiro que mata MAIS inimigos de uma vez (a bala atravessa); empate: menos ricochetes
-            val now = bestMulti(bounces, area, block, multiLock)
-            multiLock = now?.first
-            now?.let { out.add(Triple(traceAll(cos(it.first), sin(it.first), area, block).first, aimOf(it.first), 2)) }
-            val more = if (bounces < MAX_EXTRA) bestMulti(MAX_EXTRA, area, block, extraLock) else null
-            val ok = more != null && more.second > (now?.second ?: 1) // só mostra se acertar mais gente que o Ric atual
-            extraLock = if (ok) more!!.first else null
-            if (ok) out.add(Triple(traceAll(cos(more!!.first), sin(more.first), area, block, MAX_EXTRA).first, aimOf(more.first), 3))
-        } else { multiLock = null; extraLock = null }
+        while (shotLocks.size > out.count { it.third <= 1 }) shotLocks.removeAt(shotLocks.size - 1)
+        // com mais ricochetes dá para matar mais gente no primeiro tiro? sugere em roxo
+        val f = first
+        val more = if (f != null && bounces < MAX_EXTRA) routesFor(MAX_EXTRA, area, block, BooleanArray(targets.size) { true }) else emptyList()
+        val m = more.firstOrNull { extraLock != null && angDiff(it.ang, extraLock!!) < 0.03f } ?: more.firstOrNull()
+        if (f != null && m != null && m.count > f.count) { extraLock = m.ang; out.add(Triple(m.pts, aimOf(m.ang), 3)) } else extraLock = null
         return out
     }
 
@@ -254,9 +250,9 @@ class AimView(ctx: Context) : View(ctx) {
         }
         // guia: rotas que acertam; o ponto azul é onde apontar no jogo
         // segurando a mira: só a melhor rota, para a tela não encher de linhas
-        solve().filter { crosshair == null || it.third == 0 || it.third >= 2 }.sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
+        solve().filter { crosshair == null || it.third == 0 || it.third == 3 }.sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
             line.color = when (kind) { 0 -> 0xFF34C759.toInt(); 1 -> 0xFF00C7FF.toInt(); 2 -> 0xFFFF7000.toInt(); else -> 0xFFAF52DE.toInt() }
-            line.strokeWidth = if (kind == 1) 4f else 6f
+            line.strokeWidth = if (kind == 0 || kind == 3) 7f else 4f
             drawPath(c, pts)
             dot.color = 0xFF0A84FF.toInt(); c.drawCircle(aim.x, aim.y, 14f, dot)
         }
