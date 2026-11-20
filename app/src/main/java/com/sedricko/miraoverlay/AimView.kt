@@ -78,6 +78,12 @@ class AimView(ctx: Context) : View(ctx) {
     }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    // A bala sai da PONTA da arma, não do corpo: ombro um pouco à frente do cabelo (lado da mira) + comprimento da arma.
+    // shortcut: medidas em fração da largura da tela, tiradas de 2 prints; refinar se a linha ainda sair torta.
+    private fun pivotX(dirX: Float) = origin.x + (if (dirX >= 0f) 1f else -1f) * 0.03f * width
+    private fun pivotY() = origin.y - 0.012f * width
+    private fun muzzle(dx: Float, dy: Float) = PointF(pivotX(dx) + dx * 0.048f * width, pivotY() + dy * 0.048f * width)
+
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
 
     /** Primeira parede/bloco no caminho: distância e se a parede é vertical (inverte x). */
@@ -100,8 +106,9 @@ class AimView(ctx: Context) : View(ctx) {
 
     /** Dispara na direção dada; hit=true (e d=distância) se o tiro passa por t. */
     private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?): Triple<List<PointF>, Boolean, Float> {
-        val pts = mutableListOf(PointF(origin.x, origin.y))
-        var px = origin.x; var py = origin.y
+        val m0 = muzzle(dirX, dirY)
+        val pts = mutableListOf(m0)
+        var px = m0.x; var py = m0.y
         var dx = dirX; var dy = dirY
         for (i in 0..bounces) {
             if (abs(dx) < 1e-6f) dx = 1e-6f
@@ -124,9 +131,10 @@ class AimView(ctx: Context) : View(ctx) {
 
     /** Tiro que atravessa os inimigos vivos: caminho até o último acerto, quantos acerta e quais. */
     private fun traceAll(dirX: Float, dirY: Float, area: RectF, block: RectF, nb: Int, alive: BooleanArray): Triple<List<PointF>, Int, BooleanArray> {
-        val pts = mutableListOf(PointF(origin.x, origin.y))
+        val m0 = muzzle(dirX, dirY)
+        val pts = mutableListOf(m0)
         val got = BooleanArray(targets.size)
-        var px = origin.x; var py = origin.y
+        var px = m0.x; var py = m0.y
         var dx = dirX; var dy = dirY
         var cutSeg = -1; var cutProj = 0f; var cutX = 0f; var cutY = 0f; var cutDx = 0f; var cutDy = 0f
         for (i in 0..nb) {
@@ -178,7 +186,7 @@ class AimView(ctx: Context) : View(ctx) {
         return min(d, 2 * Math.PI.toFloat() - d)
     }
 
-    private fun aimOf(ang: Float) = PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f)
+    private fun aimOf(ang: Float): PointF { val m = muzzle(cos(ang), sin(ang)); return PointF(m.x + cos(ang) * 300f, m.y + sin(ang) * 300f) }
 
     /**
      * Plano para matar TODOS os inimigos gastando o mínimo de tiros: cada tiro mata o máximo possível de inimigos
@@ -226,7 +234,7 @@ class AimView(ctx: Context) : View(ctx) {
         if (!autoMode) { // manual: a linha acompanha o dedo
             line.color = 0xFFFF3B30.toInt()
             val p = aimPt ?: return
-            val dx = p.x - origin.x; val dy = p.y - origin.y
+            val dx = p.x - pivotX(p.x - origin.x); val dy = p.y - pivotY()
             val len = hypot(dx, dy)
             if (len < 1f) return
             drawPath(c, trace(dx / len, dy / len, area, block, null).first)
@@ -237,7 +245,7 @@ class AimView(ctx: Context) : View(ctx) {
         }
         // destino final da bala para a mira que você está segurando
         crosshair?.let { p ->
-            val dx = p.x - origin.x; val dy = p.y - origin.y; val len = hypot(dx, dy)
+            val dx = p.x - pivotX(p.x - origin.x); val dy = p.y - pivotY(); val len = hypot(dx, dy)
             if (len > 5f) {
                 val pts = trace(dx / len, dy / len, area, block, null).first
                 line.color = 0xFF2F6BFF.toInt(); line.strokeWidth = 5f
