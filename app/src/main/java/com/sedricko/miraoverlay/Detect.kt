@@ -4,12 +4,14 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.RectF
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.max
 
 /** walls: grade de células de 16px a partir de (left,top); true = parede de tijolo. */
 class Detection(
     val shooter: PointF?, val enemies: List<PointF>,
     val walls: BooleanArray, val cols: Int, val rows: Int, val left: Float, val top: Float,
+    val crosshair: PointF?, // mira dourada que o jogo desenha onde está o seu dedo
 )
 
 private class Cl(val l: Float, val t: Float, val r: Float, val b: Float, val tot: Int, val cx: Float, val cy: Float) {
@@ -72,12 +74,31 @@ fun findTargets(b: Bitmap, a: RectF): Detection? {
     val darks = comps(dark, 3)
     if (darks.any { it.w > 500 || it.h > 600 }) return null // tela escurecida: vitória/transição
 
-    // atiradora = cabelo loiro perto de uma mancha escura (a mira do próprio jogo também é dourada, mas fica solta)
-    val hair = comps(gold, 1).filter { h ->
-        h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 }
+    // roupa azul logo abaixo do cabelo: distingue a atiradora de brilhos/mira dourados
+    fun blueBelow(cx: Float, cy: Float): Int {
+        var n = 0; var yy = (cy + 15).toInt()
+        while (yy < cy + 120 && yy < b.height) {
+            var xx = (cx - 50).toInt().coerceAtLeast(0)
+            while (xx < cx + 50 && xx < b.width) {
+                val p = b.getPixel(xx, yy); val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
+                if (r < 110 && g < 140 && bb in 70..170 && bb > r + 30) n++
+                xx += 4
+            }
+            yy += 4
+        }
+        return n
+    }
+    // atiradora = cabelo loiro perto de uma mancha escura e com roupa azul embaixo
+    val golds = comps(gold, 1)
+    val hair = golds.filter { h ->
+        h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 } &&
+            blueBelow(h.cx, h.cy) >= 14
     }.maxByOrNull { it.tot }
     // y: altura do cano em relação ao cabelo
     val shooter = hair?.let { PointF(it.cx, it.cy + 8f) } // sem cabelo na tela: não move a atiradora
+    // mira do jogo: outro dourado grande, longe da atiradora (o brilho do tiro também é dourado, mas dura pouco)
+    val cross = golds.filter { it !== hair && it.tot >= 20 && it.w in 48f..160f && it.h in 48f..160f &&
+        (shooter == null || hypot(it.cx - shooter.x, it.cy - shooter.y) > 100f) }.maxByOrNull { it.tot }?.let { PointF(it.cx, it.cy) }
 
     val enemies = darks.filter { d ->
         d.h >= 80 && d.h >= 1.1f * d.w && // descarta corpo caído e manchas pequenas
@@ -98,5 +119,5 @@ fun findTargets(b: Bitmap, a: RectF): Detection? {
         }
         walls[r * cols + c] = n >= 8
     }
-    return Detection(shooter, enemies, walls, cols, rows, a.left, a.top)
+    return Detection(shooter, enemies, walls, cols, rows, a.left, a.top, cross)
 }

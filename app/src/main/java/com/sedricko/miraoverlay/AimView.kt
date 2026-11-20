@@ -25,6 +25,7 @@ class AimView(ctx: Context) : View(ctx) {
     var bounces = 3
         set(v) { field = v.coerceIn(0, 8); invalidate() }
     var autoMode = true
+    var crosshair: PointF? = null // mira do jogo (detectada no print): mostramos para onde a bala vai
     var targets: List<PointF> = emptyList()
         private set
     private var locks = listOf<Pair<PointF, Float>>() // (inimigo, ângulo da rota travada)
@@ -224,6 +225,19 @@ class AimView(ctx: Context) : View(ctx) {
             c.drawLine(p.x - 60f, p.y, p.x + 60f, p.y, line)
             c.drawLine(p.x, p.y - 60f, p.x, p.y + 60f, line)
             return
+        }
+        // destino final da bala para a mira que você está segurando
+        crosshair?.let { p ->
+            val dx = p.x - origin.x; val dy = p.y - origin.y; val len = hypot(dx, dy)
+            if (len > 5f) {
+                val pts = trace(dx / len, dy / len, area, block, null).first
+                line.color = 0xFF2F6BFF.toInt(); line.strokeWidth = 5f
+                drawPath(c, pts)
+                val e = pts.last(); val hit = targets.any { trace(dx / len, dy / len, area, block, it).second }
+                line.color = if (hit) 0xFF34C759.toInt() else 0xFFFF3B30.toInt()
+                c.drawCircle(e.x, e.y, 30f, line); dot.color = line.color; c.drawCircle(e.x, e.y, 10f, dot)
+                line.strokeWidth = 6f
+            }
         }
         // guia: rotas que acertam; o ponto azul é onde apontar no jogo
         solve().sortedByDescending { it.third }.forEach { (pts, aim, kind) ->

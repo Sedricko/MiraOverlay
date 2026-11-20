@@ -25,7 +25,7 @@
 <body>
 <main>
   <h1>Simulador do Mira Overlay</h1>
-  <p class="sub">11 cenas de teste. Arraste no jogo para mirar e solte para atirar, ou toque em <b>Simular toque</b> para ver o app achando a rota e o "dedo" fazendo o resto.</p>
+  <p class="sub">11 cenas de teste. Arraste no jogo para mirar: a linha azul mostra o destino final da bala. Solte para atirar, ou toque em <b>Simular toque</b> para ver o app achando a rota e o "dedo" fazendo o resto.</p>
   <canvas id="c"></canvas>
   <div class="legend">
     <span><i style="background:#34c759"></i>melhor rota</span>
@@ -264,6 +264,20 @@ function draw() {
     });
   }
   // mira do próprio jogo (cruz no dedo + linha pontilhada)
+  // destino final da bala para a mira atual (o jogo não mostra isso)
+  if (finger && guide) {
+    const dx = finger.x - s.shooter[0], dy = finger.y - s.shooter[1], len = Math.hypot(dx, dy);
+    if (len > 5) {
+      const pp = trace(s.shooter, dx / len, dy / len, CB, nb, null).pts;
+      ctx.strokeStyle = '#2f6bff'; ctx.lineWidth = 3.5; ctx.beginPath(); pp.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke();
+      ctx.fillStyle = '#fff'; for (let i = 1; i < pp.length - 1; i++) { ctx.beginPath(); ctx.arc(pp[i][0], pp[i][1], 3.5, 0, 7); ctx.fill(); }
+      const e = pp[pp.length - 1], hit = s.enemies.some((q, k) => alive[k] && trace(s.shooter, dx / len, dy / len, CB, nb, q).hit);
+      ctx.strokeStyle = hit ? '#34c759' : '#ff3b30'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(e[0], e[1], 14, 0, 7); ctx.stroke(); ctx.beginPath(); ctx.arc(e[0], e[1], 5, 0, 7); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+      ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+      ctx.fillText(hit ? 'acerta!' : 'destino', Math.min(W - 30, Math.max(30, e[0])), e[1] - 20);
+    }
+  }
   if (finger) {
     ctx.save(); ctx.setLineDash([3, 6]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s.shooter[0], s.shooter[1] - 4); ctx.lineTo(finger.x, finger.y); ctx.stroke(); ctx.restore();
     ctx.strokeStyle = '#f5c542'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(finger.x, finger.y, 12, 0, 7); ctx.moveTo(finger.x - 18, finger.y); ctx.lineTo(finger.x + 18, finger.y); ctx.moveTo(finger.x, finger.y - 18); ctx.lineTo(finger.x, finger.y + 18); ctx.stroke();
