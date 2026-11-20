@@ -202,7 +202,7 @@ class AimView(ctx: Context) : View(ctx) {
             while (shotLocks.size <= shot) shotLocks.add(null)
             shotLocks[shot] = pick.ang
             out.add(Triple(pick.pts, aimOf(pick.ang), if (shot == 0) 0 else 1))
-            if (shot == 0) { first = pick; routes.filter { it !== pick }.take(3).forEach { out.add(Triple(it.pts, aimOf(it.ang), 2)) } }
+            if (shot == 0) { first = pick; routes.filter { it !== pick }.take(1).forEach { out.add(Triple(it.pts, aimOf(it.ang), 2)) } }
             pick.hit.forEachIndexed { k, h -> if (h) alive[k] = false }
         }
         while (shotLocks.size > out.count { it.third <= 1 }) shotLocks.removeAt(shotLocks.size - 1)
