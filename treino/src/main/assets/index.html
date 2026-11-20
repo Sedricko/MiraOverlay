@@ -186,7 +186,7 @@ function afterShot() {
   const my = run;
   if (!alive.some(x => x)) {
     won = true; setMsg('Acertou! Fase concluída. ' + (autoAll ? '' : 'Toque em "Fase ▶" para a próxima.'));
-    if (autoAll) setTimeout(() => { if (run === my) { if (si + 1 < SCENES.length) { load(si + 1); startDemo(); } else { autoAll = false; setMsg('As 10 cenas foram resolvidas pelo guia.'); } } }, 1400);
+    if (autoAll) setTimeout(() => { if (run === my) { if (si + 1 < SCENES.length) { load(si + 1); startDemo(); } else { autoAll = false; setMsg('Todas as cenas foram resolvidas pelo guia.'); } } }, 1400);
   } else if (ammo <= 0) { setMsg('Acabaram as balas. Toque em ↻ para reiniciar.'); autoAll = false; }
   else { setMsg('Ainda há inimigo. O guia recalculou a rota.'); if (autoAll) setTimeout(() => { if (run === my) startDemo(); }, 900); }
 }
