@@ -106,9 +106,25 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
     // y: altura do cano em relação ao cabelo
     val shooter = hair?.let { PointF(it.cx, it.cy + 8f) } // sem cabelo na tela: não move a atiradora
     val ref = shooter ?: oldShooter // quem NÃO é inimigo nem mira, mesmo se a atiradora sumir por um instante
-    // mira do jogo: outro dourado grande, longe da atiradora (o brilho do tiro também é dourado, mas dura pouco)
+    // mira do jogo: dourado grande longe da atiradora E ligado a ela pela linha pontilhada clara do jogo.
+    // O brilho/projétil do tiro também é dourado mas não tem essa linha (testado nos vídeos: 0-0,15 contra 0,4-0,7).
+    fun paleLine(c: Cl): Float {
+        var n = 0
+        for (k in 1..40) {
+            val x = ref.x + (c.cx - ref.x) * k / 41f; val y = ref.y + (c.cy - ref.y) * k / 41f
+            var ok = false
+            for (dx in -6..6 step 6) for (dy in -6..6 step 6) {
+                val px = (x + dx).toInt(); val py = (y + dy).toInt()
+                if (px !in 0 until b.width || py !in 0 until b.height) continue
+                val p = b.getPixel(px, py); val r = (p shr 16) and 255; val g = (p shr 8) and 255; val bb = p and 255
+                if (r > 225 && g > 205 && bb in 111..234 && r - bb > 25) ok = true
+            }
+            if (ok) n++
+        }
+        return n / 40f
+    }
     val cross = golds.filter { it !== hair && it.tot >= 20 && it.w in 48f..160f && it.h in 48f..160f &&
-        hypot(it.cx - ref.x, it.cy - ref.y) > 100f }.maxByOrNull { it.tot }?.let { PointF(it.cx, it.cy) }
+        hypot(it.cx - ref.x, it.cy - ref.y) > 100f && paleLine(it) >= 0.3f }.maxByOrNull { it.tot }?.let { PointF(it.cx, it.cy) }
 
     val enemies = darks.filter { d ->
         d.h >= 80 && d.h >= 1.1f * d.w && // descarta corpo caído e manchas pequenas
