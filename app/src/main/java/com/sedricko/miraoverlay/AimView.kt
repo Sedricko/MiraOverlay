@@ -240,7 +240,8 @@ class AimView(ctx: Context) : View(ctx) {
             }
         }
         // guia: rotas que acertam; o ponto azul é onde apontar no jogo
-        solve().sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
+        // segurando a mira: só a melhor rota, para a tela não encher de linhas
+        solve().filter { crosshair == null || it.third == 0 }.sortedByDescending { it.third }.forEach { (pts, aim, kind) ->
             line.color = when (kind) { 0 -> 0xFF34C759.toInt(); 1 -> 0xFF00C7FF.toInt(); else -> 0xFFFF7000.toInt() }
             line.strokeWidth = if (kind == 1) 4f else 6f
             drawPath(c, pts)

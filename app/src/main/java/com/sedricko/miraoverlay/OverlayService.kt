@@ -84,7 +84,7 @@ class OverlayService : Service() {
                 if (bmp != null) {
                     val a = android.graphics.RectF(minOf(aim.areaA.x, aim.areaB.x), minOf(aim.areaA.y, aim.areaB.y),
                         maxOf(aim.areaA.x, aim.areaB.x), maxOf(aim.areaA.y, aim.areaB.y))
-                    val det = findTargets(bmp, a)
+                    val det = findTargets(bmp, a, aim.origin)
                     bmp.recycle()
                     if (det == null) { // tela que não é o jogo (vitória/transição): some com o guia
                         misses = 3; aim.updateTargets(emptyList()); aim.crosshair = null

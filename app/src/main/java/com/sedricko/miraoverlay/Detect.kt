@@ -29,7 +29,7 @@ private const val CELL = 16
  * Devolve null em tela que não é o jogo (vitória, transição escura).
  * shortcut: heurística de cor; fases de fundo escuro ou inimigo loiro podem falhar, trocar por template matching.
  */
-fun findTargets(b: Bitmap, a: RectF): Detection? {
+fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
     val cols = (a.width() / CELL).toInt() + 1; val rows = (a.height() / CELL).toInt() + 1
     val dark = IntArray(cols * rows); val gold = IntArray(cols * rows); val red = IntArray(cols * rows)
     var y = a.top.toInt() + 6
@@ -88,21 +88,25 @@ fun findTargets(b: Bitmap, a: RectF): Detection? {
         }
         return n
     }
-    // atiradora = cabelo loiro perto de uma mancha escura e com roupa azul embaixo
+    // atiradora = cabelo loiro perto de uma mancha escura e com roupa azul embaixo;
+    // se a roupa não aparecer bem, vale o dourado mais perto de onde ela estava (ela anda em plataforma móvel)
     val golds = comps(gold, 1)
-    val hair = golds.filter { h ->
-        h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 } &&
-            blueBelow(h.cx, h.cy) >= 14
-    }.maxByOrNull { it.tot }
+    val nearDark = golds.filter { h ->
+        h.tot >= 6 && darks.any { abs(h.cx - (it.l + it.r) / 2) < it.w / 2 + 100 && h.cy > it.t - 100 && h.cy < it.b + 100 }
+    }
+    val hair = nearDark.filter { blueBelow(it.cx, it.cy) >= 14 }.maxByOrNull { it.tot }
+        ?: nearDark.filter { hypot(it.cx - oldShooter.x, it.cy + 8f - oldShooter.y) < 120f }
+            .minByOrNull { hypot(it.cx - oldShooter.x, it.cy + 8f - oldShooter.y) }
     // y: altura do cano em relação ao cabelo
     val shooter = hair?.let { PointF(it.cx, it.cy + 8f) } // sem cabelo na tela: não move a atiradora
+    val ref = shooter ?: oldShooter // quem NÃO é inimigo nem mira, mesmo se a atiradora sumir por um instante
     // mira do jogo: outro dourado grande, longe da atiradora (o brilho do tiro também é dourado, mas dura pouco)
     val cross = golds.filter { it !== hair && it.tot >= 20 && it.w in 48f..160f && it.h in 48f..160f &&
-        (shooter == null || hypot(it.cx - shooter.x, it.cy - shooter.y) > 100f) }.maxByOrNull { it.tot }?.let { PointF(it.cx, it.cy) }
+        hypot(it.cx - ref.x, it.cy - ref.y) > 100f }.maxByOrNull { it.tot }?.let { PointF(it.cx, it.cy) }
 
     val enemies = darks.filter { d ->
         d.h >= 80 && d.h >= 1.1f * d.w && // descarta corpo caído e manchas pequenas
-            !(shooter != null && abs(shooter.x - (d.l + d.r) / 2) < d.w / 2 + 100 && shooter.y > d.t - 100 && shooter.y < d.b + 100)
+            !(abs(ref.x - (d.l + d.r) / 2) < d.w / 2 + 100 && ref.y > d.t - 100 && ref.y < d.b + 100)
     }.map { PointF((it.l + it.r) / 2, it.t + it.h * 0.4f) }.toMutableList()
     comps(red, 2).filter { it.tot >= 6 }.forEach { enemies.add(PointF(it.cx, it.cy)) } // barris/cilindros explosivos
 
