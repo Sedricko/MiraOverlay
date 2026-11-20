@@ -6,26 +6,31 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 
-/** Camada de desenho em tela cheia. Nunca captura toque: o jogo abaixo continua jogável. */
+/**
+ * Janela do tamanho da área de jogo. Segure e arraste: a linha com ricochetes acompanha o dedo.
+ * Ao soltar, onShoot recebe o ponto (coordenadas de tela) para tocar no jogo.
+ * Fora desta janela (botões, itens) os toques vão direto para o jogo.
+ */
 class AimView(ctx: Context) : View(ctx) {
     var bounces = 3
         set(v) { field = v.coerceIn(0, 8); invalidate() }
+    var onShoot: ((Float, Float) -> Unit)? = null
+    var offX = 0f   // canto da janela na tela
+    var offY = 0f
 
     val origin = PointF()   // atirador
-    val target = PointF()   // inimigo
     // paredes: área de jogo e bloco central (dois cantos opostos cada)
     val areaA = PointF(); val areaB = PointF()
     val blockA = PointF(); val blockB = PointF()
+    private var aimPt: PointF? = null
 
-    private val hitRadius = 45f
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFF3B30.toInt(); strokeWidth = 6f; style = Paint.Style.STROKE
     }
@@ -36,8 +41,7 @@ class AimView(ctx: Context) : View(ctx) {
 
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
 
-    /** Dispara na direção (dx,dy) e devolve o caminho; hit=true se o tiro passou pelo alvo. */
-    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF): Pair<List<PointF>, Boolean> {
+    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF): List<PointF> {
         val pts = mutableListOf(PointF(origin.x, origin.y))
         var px = origin.x; var py = origin.y
         var dx = dirX; var dy = dirY
@@ -61,54 +65,42 @@ class AimView(ctx: Context) : View(ctx) {
                 if (enter > 1e-3f && enter < exit && enter < bestT) { bestT = enter; flipX = enterX > enterY }
             }
 
-            val segLen = if (bestT == Float.MAX_VALUE) 4000f else bestT
-            // o tiro passa perto do inimigo neste trecho?
-            val proj = ((target.x - px) * dx + (target.y - py) * dy).coerceIn(0f, segLen)
-            val cx = px + dx * proj; val cy = py + dy * proj
-            if (hypot(cx - target.x, cy - target.y) < hitRadius) { pts.add(PointF(cx, cy)); return pts to true }
-
-            px += dx * segLen; py += dy * segLen
+            if (bestT == Float.MAX_VALUE) { pts.add(PointF(px + dx * 4000, py + dy * 4000)); return pts }
+            px += dx * bestT; py += dy * bestT
             pts.add(PointF(px, py))
-            if (bestT == Float.MAX_VALUE) break
             if (flipX) dx = -dx else dy = -dy
         }
-        return pts to false
-    }
-
-    /** Varre os ângulos e escolhe o que acerta o alvo com menos ricochetes. */
-    private fun solve(area: RectF, block: RectF): Pair<List<PointF>, Float>? {
-        var best: List<PointF>? = null; var bestAng = 0f
-        for (a in 0 until 3600) {
-            val ang = a * (2 * Math.PI / 3600).toFloat()
-            val (pts, hit) = trace(cos(ang), sin(ang), area, block)
-            if (hit && (best == null || pts.size < best.size)) { best = pts; bestAng = ang }
-        }
-        return best?.let { it to bestAng }
+        return pts
     }
 
     override fun onDraw(c: Canvas) {
+        c.translate(-offX, -offY) // desenha em coordenadas de tela
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         dash.color = 0xFF34C759.toInt(); c.drawRect(area, dash)
         dash.color = 0xFFFFCC00.toInt(); c.drawRect(block, dash)
 
-        // mira (crosshair) no inimigo
-        c.drawCircle(target.x, target.y, 40f, line)
-        c.drawLine(target.x - 60f, target.y, target.x + 60f, target.y, line)
-        c.drawLine(target.x, target.y - 60f, target.x, target.y + 60f, line)
-
-        val sol = solve(area, block)
-        if (sol == null) { // sem caminho com esse número de ricochetes
-            line.color = 0x88FFFFFF.toInt()
-            c.drawLine(origin.x, origin.y, target.x, target.y, line)
-            line.color = 0xFFFF3B30.toInt()
-            return
-        }
-        val (pts, ang) = sol
+        val p = aimPt ?: return
+        val dx = p.x - origin.x; val dy = p.y - origin.y
+        val len = hypot(dx, dy)
+        if (len < 1f) return
+        val pts = trace(dx / len, dy / len, area, block)
         for (i in 0 until pts.size - 1) c.drawLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, line)
         dot.color = 0xFFFFFFFF.toInt()
         for (i in 1 until pts.size - 1) c.drawCircle(pts[i].x, pts[i].y, 10f, dot)
-        // ponto na direção certa do tiro, perto do atirador: é para onde apontar no jogo
-        dot.color = 0xFF0A84FF.toInt()
-        c.drawCircle(origin.x + cos(ang) * 250f, origin.y + sin(ang) * 250f, 14f, dot)
+
+        // mira no ponto do dedo
+        c.drawCircle(p.x, p.y, 40f, line)
+        c.drawLine(p.x - 60f, p.y, p.x + 60f, p.y, line)
+        c.drawLine(p.x, p.y - 60f, p.x, p.y + 60f, line)
+    }
+
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                aimPt = PointF(e.rawX, e.rawY); invalidate()
+            }
+            MotionEvent.ACTION_UP -> onShoot?.invoke(e.rawX, e.rawY)
+        }
+        return true
     }
 }
