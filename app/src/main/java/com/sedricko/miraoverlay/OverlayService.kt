@@ -104,7 +104,7 @@ class OverlayService : Service() {
         wm.updateViewLayout(aim, aimParams)
         ui.postDelayed({
             s.tap(x, y) {
-                aimParams.flags = base
+                aimParams.flags = if (aim.autoMode) base or LP.FLAG_NOT_TOUCHABLE else base
                 wm.updateViewLayout(aim, aimParams)
                 // durante o voo do tiro o inimigo reage; não reanalisa por 2 s
                 ui.postDelayed({ shooting = false }, 2000)
@@ -124,7 +124,7 @@ class OverlayService : Service() {
             blockA.set(w * .333f, h * .617f); blockB.set(w * .667f, h * .771f)
             onShoot = { x, y -> shoot(x, y) }
         }
-        aimParams = LP(1, 1, LP.TYPE_APPLICATION_OVERLAY, base, PixelFormat.TRANSLUCENT)
+        aimParams = LP(1, 1, LP.TYPE_APPLICATION_OVERLAY, base or LP.FLAG_NOT_TOUCHABLE, PixelFormat.TRANSLUCENT)
             .apply { gravity = Gravity.TOP or Gravity.START }
         wm.addView(aim, aimParams)
         syncWindow()
@@ -140,12 +140,14 @@ class OverlayService : Service() {
         fun btn(t: String) = Button(this).apply { text = t; textSize = 12f; minWidth = 0; minimumWidth = 0 }
         val wallsBtn = btn("Paredes")
         val bounceBtn = btn("Ric: ${aim.bounces}")
-        val autoBtn = btn("Auto: On")
+        val autoBtn = btn("Guia")
         val onOffBtn = btn("On/Off")
         val closeBtn = btn("X")
         autoBtn.setOnClickListener {
             aim.autoMode = !aim.autoMode
-            autoBtn.text = if (aim.autoMode) "Auto: On" else "Auto: Off"
+            autoBtn.text = if (aim.autoMode) "Guia" else "Manual"
+            aimParams.flags = if (aim.autoMode) base or LP.FLAG_NOT_TOUCHABLE else base
+            wm.updateViewLayout(aim, aimParams)
             aim.invalidate()
         }
         wallsBtn.setOnClickListener {

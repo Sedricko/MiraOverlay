@@ -17,8 +17,8 @@ import kotlin.math.sin
 
 /**
  * Janela do tamanho da área de jogo.
- * Auto: mostra a trajetória travada que acerta o inimigo detectado; tocar atira nela.
- * Arrastar (mais de 40px) assume o controle manual: a linha acompanha o dedo.
+ * Guia (autoMode): mostra as rotas com ricochete que acertam o inimigo e deixa os toques passarem para o jogo.
+ * Manual: a linha acompanha o dedo e, ao soltar, o app toca no jogo nesse ponto.
  * Fora desta janela (botões, itens) os toques vão direto para o jogo.
  */
 class AimView(ctx: Context) : View(ctx) {
@@ -34,8 +34,6 @@ class AimView(ctx: Context) : View(ctx) {
     val areaA = PointF(); val areaB = PointF()
     val blockA = PointF(); val blockB = PointF()
     private var aimPt: PointF? = null
-    private var down = PointF()
-    private var manual = false
 
     private val hitRadius = 45f
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -85,16 +83,25 @@ class AimView(ctx: Context) : View(ctx) {
         return pts to false
     }
 
-    /** Varre os ângulos e escolhe o que acerta algum inimigo com menos ricochetes. Devolve caminho e ponto de mira. */
-    private fun solve(): Pair<List<PointF>, PointF>? {
+    /** Varre 360° e devolve até 3 rotas que acertam o inimigo (menos ricochetes primeiro), cada uma com o ponto de mira. */
+    private fun solve(): List<Pair<List<PointF>, PointF>> {
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
-        var best: List<PointF>? = null; var bestAng = 0f
-        for (t in targets) for (a in 0 until 3600) {
-            val ang = a * (2 * Math.PI / 3600).toFloat()
-            val (pts, hit) = trace(cos(ang), sin(ang), area, block, t)
-            if (hit && (best == null || pts.size < best.size)) { best = pts; bestAng = ang }
+        val cands = mutableListOf<Pair<List<PointF>, Float>>()
+        for (t in targets) {
+            val cluster = mutableListOf<Pair<List<PointF>, Float>>()
+            var last = -1000
+            fun flush() { if (cluster.isNotEmpty()) cands.add(cluster[cluster.size / 2]); cluster.clear() }
+            for (a in 0 until 3600) {
+                val ang = a * (2 * Math.PI / 3600).toFloat()
+                val (pts, hit) = trace(cos(ang), sin(ang), area, block, t)
+                if (!hit) continue
+                if (a - last > 30) flush() // mais de 3° de diferença = rota diferente
+                cluster.add(pts to ang); last = a
+            }
+            flush()
         }
-        return best?.let { it to PointF(origin.x + cos(bestAng) * 300f, origin.y + sin(bestAng) * 300f) }
+        return cands.sortedBy { it.first.size }.take(3)
+            .map { (pts, ang) -> pts to PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f) }
     }
 
     override fun onDraw(c: Canvas) {
@@ -105,9 +112,9 @@ class AimView(ctx: Context) : View(ctx) {
 
         line.color = 0xFF34C759.toInt()
         for (t in targets) c.drawCircle(t.x, t.y, 50f, line) // inimigos reconhecidos
-        line.color = 0xFFFF3B30.toInt()
 
-        if (manual) {
+        if (!autoMode) { // manual: a linha acompanha o dedo
+            line.color = 0xFFFF3B30.toInt()
             val p = aimPt ?: return
             val dx = p.x - origin.x; val dy = p.y - origin.y
             val len = hypot(dx, dy)
@@ -116,13 +123,16 @@ class AimView(ctx: Context) : View(ctx) {
             c.drawCircle(p.x, p.y, 40f, line)
             c.drawLine(p.x - 60f, p.y, p.x + 60f, p.y, line)
             c.drawLine(p.x, p.y - 60f, p.x, p.y + 60f, line)
-        } else if (autoMode) {
-            val (pts, aim) = solve() ?: return
-            line.color = 0xFF34C759.toInt()
+            return
+        }
+        // guia: rotas que acertam; o ponto azul é onde apontar no jogo
+        solve().forEachIndexed { i, (pts, aim) ->
+            line.color = if (i == 0) 0xFF34C759.toInt() else 0xFF00C7FF.toInt()
+            line.strokeWidth = if (i == 0) 6f else 4f
             drawPath(c, pts)
             dot.color = 0xFF0A84FF.toInt(); c.drawCircle(aim.x, aim.y, 14f, dot)
-            line.color = 0xFFFF3B30.toInt()
         }
+        line.strokeWidth = 6f
     }
 
     private fun drawPath(c: Canvas, pts: List<PointF>) {
@@ -131,19 +141,11 @@ class AimView(ctx: Context) : View(ctx) {
         for (i in 1 until pts.size - 1) c.drawCircle(pts[i].x, pts[i].y, 10f, dot)
     }
 
+    // só chega toque aqui no modo manual (no guia a janela deixa o toque passar para o jogo)
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { down = PointF(e.rawX, e.rawY); manual = !autoMode; aimPt = down; invalidate() }
-            MotionEvent.ACTION_MOVE -> {
-                if (hypot(e.rawX - down.x, e.rawY - down.y) > 40f) manual = true
-                aimPt = PointF(e.rawX, e.rawY); invalidate()
-            }
-            MotionEvent.ACTION_UP -> {
-                val auto = if (!manual) solve() else null
-                val p = auto?.second ?: PointF(e.rawX, e.rawY) // sem solução: atira onde tocou
-                manual = false
-                onShoot?.invoke(p.x, p.y)
-            }
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { aimPt = PointF(e.rawX, e.rawY); invalidate() }
+            MotionEvent.ACTION_UP -> onShoot?.invoke(e.rawX, e.rawY)
         }
         return true
     }
