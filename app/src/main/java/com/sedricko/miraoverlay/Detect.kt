@@ -33,7 +33,7 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
     // varre a tela toda: a mira dourada costuma ficar FORA da área (dedo abaixo da arena). Fora da área só conta
     // o dourado, e só na faixa do meio (o topo e a base têm balas/botões dourados do jogo).
     val cols = (b.width / CELL) + 1; val rows = (b.height / CELL) + 1
-    val dark = IntArray(cols * rows); val gold = IntArray(cols * rows); val red = IntArray(cols * rows)
+    val dark = IntArray(cols * rows); val blue = IntArray(cols * rows); val gold = IntArray(cols * rows); val red = IntArray(cols * rows)
     val bandT = b.height * 0.18f; val bandB = b.height * 0.80f
     var y = 6
     while (y < b.height) {
@@ -47,6 +47,7 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
                 if (inA && max(max(r, g), bb) < 75) dark[i]++
                 if (r > 190 && g in 140..215 && bb < 120) gold[i]++
                 if (inA && r > 170 && g < 80 && bb < 80) red[i]++
+                if (inA && r < 120 && g < 140 && bb > 170 && bb > r + 80) blue[i]++ // caixa azul empurrável
             }
             x += 4
         }
@@ -131,6 +132,11 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
             !(abs(ref.x - (d.l + d.r) / 2) < d.w / 2 + 100 && ref.y > d.t - 100 && ref.y < d.b + 100)
     }.map { PointF((it.l + it.r) / 2, it.t + it.h * 0.4f) }.toMutableList()
     comps(red, 2).filter { it.tot >= 6 }.forEach { enemies.add(PointF(it.cx, it.cy)) } // barris/cilindros explosivos
+
+    // caixa azul (fase 2-8): não é parede; você atira nela para ela cair/rolar e acertar o alvo. Vira alvo da mira.
+    // shortcut: só mira na caixa parada; não simula a queda dela, trocar por simulação de física.
+    comps(blue, 6).filter { it.w >= 80 && it.h >= 80 && it.w <= 400 && it.h <= 400 && it.tot >= 60 }
+        .forEach { enemies.add(PointF(it.cx, it.cy)) }
 
     // paredes: célula é tijolo se metade dos pontos tem cor de tijolo (marrom-avermelhado)
     // a grade passa um pouco da área: a moldura de tijolo do cenário costuma ficar logo fora dela
