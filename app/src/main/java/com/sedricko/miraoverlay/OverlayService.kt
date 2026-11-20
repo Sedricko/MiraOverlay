@@ -73,14 +73,18 @@ class OverlayService : Service() {
     }
 
     private var shooting = false
+    private var misses = 0
     private val scan = object : Runnable {
         override fun run() {
             if (aim.autoMode && aim.visibility == View.VISIBLE && !shooting) AimA11y.instance?.snap { bmp ->
                 if (bmp != null) {
                     val a = android.graphics.RectF(minOf(aim.areaA.x, aim.areaB.x), minOf(aim.areaA.y, aim.areaB.y),
                         maxOf(aim.areaA.x, aim.areaB.x), maxOf(aim.areaA.y, aim.areaB.y))
-                    aim.targets = findTargets(bmp, a, aim.origin)
+                    val found = findTargets(bmp, a, aim.origin)
                     bmp.recycle()
+                    // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
+                    misses = if (found.isEmpty()) misses + 1 else 0
+                    if (found.isNotEmpty() || misses >= 3) aim.targets = found
                     aim.invalidate()
                 }
             }
@@ -102,7 +106,8 @@ class OverlayService : Service() {
             s.tap(x, y) {
                 aimParams.flags = base
                 wm.updateViewLayout(aim, aimParams)
-                shooting = false
+                // durante o voo do tiro o inimigo reage; não reanalisa por 2 s
+                ui.postDelayed({ shooting = false }, 2000)
             }
         }, 60)
     }
