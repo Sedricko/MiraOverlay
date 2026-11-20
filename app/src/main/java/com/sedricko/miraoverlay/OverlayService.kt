@@ -91,6 +91,7 @@ class OverlayService : Service() {
                     } else {
                         aim.setWalls(det)
                         aim.crosshair = det.crosshair
+                        aim.tip = det.tip
                         // acha a atiradora sozinho; ignora tremida pequena para a rota não mudar à toa
                         det.shooter?.let {
                             if (kotlin.math.hypot(it.x - aim.origin.x, it.y - aim.origin.y) > 14f) { aim.origin.set(it.x, it.y); originHandle.refresh() }

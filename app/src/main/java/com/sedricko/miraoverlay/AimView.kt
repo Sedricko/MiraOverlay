@@ -80,17 +80,33 @@ class AimView(ctx: Context) : View(ctx) {
 
     // A bala sai da PONTA da arma, não do corpo: ombro um pouco à frente do cabelo (lado da mira) + comprimento da arma.
     // shortcut: medidas em fração da largura da tela, tiradas de 2 prints; refinar se a linha ainda sair torta.
-    // o braço sobe e desce com a mira: a base da arma fica ~0,04*largura abaixo do cabelo mirando para baixo e acima mirando para cima
-    private fun pivotX(dirX: Float) = origin.x + (if (dirX >= 0f) 1f else -1f) * 0.036f * width
-    private fun pivotY(dirY: Float) = origin.y + 0.042f * width * dirY
-    private fun muzzle(dx: Float, dy: Float) = PointF(pivotX(dx) + dx * 0.048f * width, pivotY(dy) + dy * 0.048f * width)
-    /** direção unitária do corpo até a mira que o dedo segura (a base da arma depende da própria direção: 2 passadas) */
+    // A bala sai da PONTA da arma. Base da arma (ombro) = modelo fixo, calibrado ao vivo: quando você segura a mira e o app
+    // enxerga a ponta do cano, a base real sai de "ponta - comprimento * direção da mira".
+    var tip: PointF? = null
+    private val gunLen get() = 0.048f * width
+    private val calX = floatArrayOf(Float.NaN, Float.NaN); private val calY = floatArrayOf(Float.NaN, Float.NaN); private val calD = floatArrayOf(0f, 0f)
+    private fun pivot(dx: Float, dy: Float): PointF {
+        val i = if (dx >= 0f) 0 else 1
+        return if (!calX[i].isNaN()) PointF(origin.x + calX[i], origin.y + calY[i] + 0.042f * width * (dy - calD[i]))
+        else PointF(origin.x + (if (i == 0) 1f else -1f) * 0.036f * width, origin.y + 0.042f * width * dy)
+    }
+    private fun muzzle(dx: Float, dy: Float): PointF { val p = pivot(dx, dy); return PointF(p.x + dx * gunLen, p.y + dy * gunLen) }
+    /** direção unitária da arma até a mira que o dedo segura */
     private fun dirTo(p: PointF): PointF {
+        val t = tip
+        if (t != null) { val l = hypot(p.x - t.x, p.y - t.y); if (l > 20f) return PointF((p.x - t.x) / l, (p.y - t.y) / l) }
         var dx = p.x - origin.x; var dy = p.y - origin.y; var l = hypot(dx, dy).coerceAtLeast(1f)
-        repeat(2) {
-            dx = p.x - pivotX(dx); dy = p.y - pivotY(dy / l); l = hypot(dx, dy).coerceAtLeast(1f)
-        }
+        repeat(2) { val pv = pivot(dx, dy / l); dx = p.x - pv.x; dy = p.y - pv.y; l = hypot(dx, dy).coerceAtLeast(1f) }
         return PointF(dx / l, dy / l)
+    }
+    private fun calibrate() {
+        val t = tip ?: return; val c = crosshair ?: return
+        val l = hypot(c.x - t.x, c.y - t.y); if (l < 60f) return
+        val ux = (c.x - t.x) / l; val uy = (c.y - t.y) / l; val i = if (ux >= 0f) 0 else 1
+        val ox = t.x - ux * gunLen - origin.x; val oy = t.y - uy * gunLen - origin.y
+        calX[i] = if (calX[i].isNaN()) ox else calX[i] * 0.7f + ox * 0.3f
+        calY[i] = if (calY[i].isNaN()) oy else calY[i] * 0.7f + oy * 0.3f
+        calD[i] = uy
     }
 
     private fun rect(a: PointF, b: PointF) = RectF(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
@@ -114,8 +130,8 @@ class AimView(ctx: Context) : View(ctx) {
     }
 
     /** Dispara na direção dada; hit=true (e d=distância) se o tiro passa por t. */
-    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?): Triple<List<PointF>, Boolean, Float> {
-        val m0 = muzzle(dirX, dirY)
+    private fun trace(dirX: Float, dirY: Float, area: RectF, block: RectF, t: PointF?, from: PointF? = null): Triple<List<PointF>, Boolean, Float> {
+        val m0 = from ?: muzzle(dirX, dirY)
         val pts = mutableListOf(m0)
         var px = m0.x; var py = m0.y
         var dx = dirX; var dy = dirY
@@ -232,6 +248,7 @@ class AimView(ctx: Context) : View(ctx) {
     }
 
     override fun onDraw(c: Canvas) {
+        calibrate()
         c.translate(-offX, -offY) // desenha em coordenadas de tela
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         dash.color = 0xFF34C759.toInt(); c.drawRect(area, dash)
@@ -244,7 +261,7 @@ class AimView(ctx: Context) : View(ctx) {
             line.color = 0xFFFF3B30.toInt()
             val p = aimPt ?: return
             val d = dirTo(p)
-            drawPath(c, trace(d.x, d.y, area, block, null).first, byBounce = false)
+            drawPath(c, trace(d.x, d.y, area, block, null, tip).first, byBounce = false)
             c.drawCircle(p.x, p.y, 40f, line)
             c.drawLine(p.x - 60f, p.y, p.x + 60f, p.y, line)
             c.drawLine(p.x, p.y - 60f, p.x, p.y + 60f, line)
@@ -255,10 +272,10 @@ class AimView(ctx: Context) : View(ctx) {
             val d = dirTo(p); val len = hypot(p.x - origin.x, p.y - origin.y)
             if (len > 5f) {
                 val dx = d.x; val dy = d.y
-                val pts = trace(dx, dy, area, block, null).first
+                val pts = trace(dx, dy, area, block, null, tip).first
                 line.color = 0xFF2F6BFF.toInt(); line.strokeWidth = 5f
                 drawPath(c, pts, byBounce = false)
-                val e = pts.last(); val hit = targets.any { trace(dx, dy, area, block, it).second }
+                val e = pts.last(); val hit = targets.any { trace(dx, dy, area, block, it, tip).second }
                 line.color = if (hit) 0xFF34C759.toInt() else 0xFFFF3B30.toInt()
                 c.drawCircle(e.x, e.y, 30f, line); dot.color = line.color; c.drawCircle(e.x, e.y, 10f, dot)
                 line.strokeWidth = 6f

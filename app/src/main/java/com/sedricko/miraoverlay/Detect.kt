@@ -12,6 +12,7 @@ class Detection(
     val shooter: PointF?, val enemies: List<PointF>,
     val walls: BooleanArray, val cols: Int, val rows: Int, val left: Float, val top: Float,
     val crosshair: PointF?, // mira dourada que o jogo desenha onde está o seu dedo
+    val tip: PointF? = null, // ponta do cano da arma
 )
 
 private class Cl(val l: Float, val t: Float, val r: Float, val b: Float, val tot: Int, val cx: Float, val cy: Float) {
@@ -156,5 +157,30 @@ fun findTargets(b: Bitmap, a: RectF, oldShooter: PointF): Detection? {
         }
         walls[r * wCols + c] = n >= 8
     }
-    return Detection(shooter, enemies, walls, wCols, wRows, wl, wt, cross)
+    // ponta do cano: o cano é escuro e fino e sai do tronco para o lado em que ela olha (acima do chapéu e abaixo da saia não conta)
+    var tip: PointF? = null
+    if (hair != null) {
+        val w = b.width.toFloat(); var bestN = 0
+        for (side in intArrayOf(1, -1)) {
+            var n = 0; var far = 0f; var fy = 0f
+            var yy = (hair.cy - 0.045f * w).toInt()
+            while (yy < hair.cy + 0.06f * w) {
+                var xx = 0.05f * w
+                while (xx < 0.14f * w) {
+                    val px = (hair.cx + side * xx).toInt()
+                    if (px in 0 until b.width && yy in 0 until b.height) {
+                        val p = b.getPixel(px, yy)
+                        if (max(max((p shr 16) and 255, (p shr 8) and 255), p and 255) < 95) {
+                            n++
+                            if (xx > far) { far = xx; fy = yy.toFloat() }
+                        }
+                    }
+                    xx += 2f
+                }
+                yy += 2
+            }
+            if (n >= 6 && n > bestN) { bestN = n; tip = PointF(hair.cx + side * far, fy) }
+        }
+    }
+    return Detection(shooter, enemies, walls, wCols, wRows, wl, wt, cross, tip)
 }
