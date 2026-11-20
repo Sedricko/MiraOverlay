@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulador Mira Overlay</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#15110f; color:#f2e8e0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:420px; margin:0 auto; padding:12px 12px 28px; }
+  h1 { font-size:18px; margin:4px 0 2px; }
+  .sub { font-size:13px; color:#c9b8ab; margin:0 0 10px; line-height:1.4; }
+  canvas { width:100%; display:block; border-radius:14px; touch-action:none; background:#000; }
+  .legend { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:#c9b8ab; margin:8px 2px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
+  .cap { background:#241c18; border-radius:12px; padding:10px 12px; font-size:14px; line-height:1.45; min-height:44px; margin:8px 0; }
+  .row { display:flex; gap:8px; margin:8px 0; align-items:center; }
+  button { flex:1; background:#3b2d26; color:#f2e8e0; border:0; border-radius:12px; padding:13px 8px; font-size:15px; font-weight:600; }
+  button:active { background:#55413a; }
+  button.on { background:#1f7a3d; }
+  button.go { background:#c2631f; }
+  .val { min-width:64px; text-align:center; font-weight:700; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Simulador do Mira Overlay</h1>
+  <p class="sub">11 cenas de teste. Arraste no jogo para mirar e solte para atirar, ou toque em <b>Simular toque</b> para ver o app achando a rota e o "dedo" fazendo o resto.</p>
+  <canvas id="c"></canvas>
+  <div class="legend">
+    <span><i style="background:#34c759"></i>melhor rota</span>
+    <span><i style="background:#00c7ff"></i>alternativas</span>
+    <span><i style="background:#0a84ff"></i>mire aqui</span>
+  </div>
+  <div class="cap" id="cap"></div>
+  <div class="row">
+    <button id="prev">◀ Fase</button><span class="val" id="sn"></span><button id="next">Fase ▶</button>
+  </div>
+  <div class="row">
+    <button id="guide" class="on">Guia: ON</button>
+    <button id="rm">Ric −</button><span class="val" id="rv"></span><button id="rp">Ric +</button>
+  </div>
+  <div class="row">
+    <button id="stab" class="on">Rota travada: ON</button>
+    <span class="val" id="sw" style="min-width:120px"></span>
+  </div>
+  <div class="row">
+    <button id="demo" class="go">▶ Simular toque</button>
+    <button id="all">▶▶ Todas</button>
+    <button id="reset">↻</button>
+  </div>
+</main>
+<script>
+// ===== lógica (mesmo algoritmo do app Android) =====
+const AREA = { l: 10, t: 40, r: 350, b: 520 };
+const HIT_R = 18;
+// cenas: blocos [x0,y0,x1,y1]; atirador x; inimigos {x,y}
+const SCENES = [
+  { name: "Bloco no meio", blocks: [[120,420,240,520]], shooter: [55,495], enemies: [[305,495]] },
+  { name: "Pilar alto", blocks: [[150,300,210,520]], shooter: [60,495], enemies: [[300,495]] },
+  { name: "Atirador à direita", blocks: [[130,400,230,520]], shooter: [305,495], enemies: [[55,495]] },
+  { name: "Dois blocos", blocks: [[90,430,150,520],[210,380,270,520]], shooter: [40,495], enemies: [[320,495]] },
+  { name: "Plataforma alta", blocks: [[150,300,200,520],[245,330,350,350]], shooter: [50,495], enemies: [[300,305]] },
+  { name: "Dois inimigos", blocks: [[90,380,130,520],[230,380,270,520]], shooter: [40,495], enemies: [[175,495],[320,495]] },
+  { name: "Laje no meio", blocks: [[80,230,350,270],[160,430,200,520]], shooter: [40,495], enemies: [[310,495]] },
+  { name: "Nas costas", blocks: [[140,300,220,520]], shooter: [320,495], enemies: [[40,495]] },
+  { name: "Fosso", blocks: [[100,380,140,520],[220,380,260,520]], shooter: [180,495], enemies: [[45,495],[320,495]] },
+  { name: "Plataforma móvel", blocks: [[150,300,210,520],[235,250,335,275]], mover: { i: 1, amp: 80, speed: 1.1 }, shooter: [50,495], enemies: [[300,495]] },
+  { name: "Labirinto", blocks: [[80,300,130,520],[180,380,230,520],[260,260,310,520]], shooter: [40,495], enemies: [[335,495]] },
+];
+
+function trace(o, dx, dy, blocks, nb, tgt) {
+  const pts = [[o[0], o[1]]];
+  let px = o[0], py = o[1];
+  for (let i = 0; i <= nb; i++) {
+    if (Math.abs(dx) < 1e-6) dx = 1e-6;
+    if (Math.abs(dy) < 1e-6) dy = 1e-6;
+    let best = Infinity, flipX = false;
+    const tx = ((dx > 0 ? AREA.r : AREA.l) - px) / dx, ty = ((dy > 0 ? AREA.b : AREA.t) - py) / dy;
+    if (tx > 1e-3 && tx < best) { best = tx; flipX = true; }
+    if (ty > 1e-3 && ty < best) { best = ty; flipX = false; }
+    for (const b of blocks) {
+      const bx1 = (b[0] - px) / dx, bx2 = (b[2] - px) / dx, by1 = (b[1] - py) / dy, by2 = (b[3] - py) / dy;
+      const ex = Math.min(bx1, bx2), ey = Math.min(by1, by2);
+      const en = Math.max(ex, ey), xt = Math.min(Math.max(bx1, bx2), Math.max(by1, by2));
+      if (en > 1e-3 && en < xt && en < best) { best = en; flipX = ex > ey; }
+    }
+    const seg = best === Infinity ? 2000 : best;
+    if (tgt) {
+      const pr = Math.max(0, Math.min(seg, (tgt[0] - px) * dx + (tgt[1] - py) * dy));
+      const cx = px + dx * pr, cy = py + dy * pr;
+      const d = Math.hypot(cx - tgt[0], cy - tgt[1]);
+      if (d < HIT_R) { pts.push([cx, cy]); return { pts, hit: true, d }; }
+    }
+    px += dx * seg; py += dy * seg; pts.push([px, py]);
+    if (best === Infinity) break;
+    if (flipX) dx = -dx; else dy = -dy;
+  }
+  return { pts, hit: false, d: 0 };
+}
+
+// melhor rota para cada inimigo vivo (menos ricochetes primeiro). lock = {índice do inimigo: ângulo}:
+// com lock a rota fica TRAVADA enquanto continuar acertando; só troca quando deixa de acertar.
+function angDiff(a, b) { const d = Math.abs(a - b) % (2 * Math.PI); return Math.min(d, 2 * Math.PI - d); }
+function solve(scene, alive, nb, lock) {
+  const out = [];
+  for (let k = 0; k < scene.enemies.length; k++) {
+    if (!alive[k]) continue;
+    const tgt = scene.enemies[k], old = lock ? lock[k] : undefined;
+    let best = null;
+    if (old !== undefined) { const r = trace(scene.shooter, Math.cos(old), Math.sin(old), scene.blocks, nb, tgt); if (r.hit) best = { pts: r.pts, ang: old, d: r.d }; }
+    if (!best) {
+      const reps = []; let cluster = [], last = -1000;
+      const flush = () => { if (cluster.length) reps.push(cluster.reduce((m, c) => c.d < m.d ? c : m)); cluster = []; };
+      for (let a = 0; a < 3600; a++) {
+        const ang = a * 2 * Math.PI / 3600;
+        const r = trace(scene.shooter, Math.cos(ang), Math.sin(ang), scene.blocks, nb, tgt);
+        if (!r.hit) continue;
+        if (a - last > 30) flush();
+        cluster.push({ pts: r.pts, ang, d: r.d }); last = a;
+      }
+      flush();
+      // menos ricochetes; empate: a mais parecida com a anterior (ou a mais central)
+      reps.sort((p, q) => p.pts.length - q.pts.length || (old !== undefined ? angDiff(p.ang, old) - angDiff(q.ang, old) : p.d - q.d));
+      best = reps[0] || null;
+    }
+    if (best) { if (lock) lock[k] = best.ang; out.push({ pts: best.pts, ang: best.ang, aim: [scene.shooter[0] + Math.cos(best.ang) * 90, scene.shooter[1] + Math.sin(best.ang) * 90] }); }
+    else if (lock) delete lock[k];
+  }
+  return out.sort((p, q) => p.pts.length - q.pts.length);
+}
+
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const W = 360, H = 560;
+function fit() { const d = window.devicePixelRatio || 1, w = cv.clientWidth; cv.width = w * d; cv.height = w * H / W * d; cv.style.height = (w * H / W) + 'px'; ctx.setTransform(cv.width / W, 0, 0, cv.width / W, 0, 0); }
+addEventListener('resize', fit); fit();
+
+let stable = true, lock = {}, switches = 0, lastAng = null, simT = 0, scanT = 0, det = [], noisy = null;
+let si = 0, alive, ammo, nb = 4, guide = true, finger = null, bullet = null, sol = [], won = false, demo = null, autoAll = false, run = 0, msg = '', trail = [];
+const sc = () => SCENES[si];
+const $ = id => document.getElementById(id);
+function setMsg(t) { msg = t; $('cap').textContent = t; }
+const rnd = a => (Math.random() * 2 - 1) * a;
+function curBlocks() {
+  const s = sc(); if (!s.mover) return s.blocks;
+  const dy = s.mover.amp * Math.sin(simT * s.mover.speed);
+  return s.blocks.map((b, i) => i === s.mover.i ? [b[0], b[1] + dy, b[2], b[3] + dy] : b);
+}
+// "varredura" do app: lê a cena a cada 0,4 s, com a tremida normal da detecção (±6 px)
+function scan() {
+  const s = sc();
+  det = s.enemies.map((e, k) => { const o = det[k]; const n = [e[0] + rnd(6), e[1] + rnd(6)]; return o && Math.hypot(o[0] - n[0], o[1] - n[1]) < 8 ? o : n; });
+  noisy = { shooter: s.shooter, blocks: curBlocks(), enemies: det };
+  sol = solve(noisy, alive, nb, stable ? lock : null);
+  if (sol[0]) { if (lastAng !== null && angDiff(sol[0].ang, lastAng) > 0.03) switches++; lastAng = sol[0].ang; } else lastAng = null;
+  $('sw').textContent = 'Trocas de rota: ' + switches;
+}
+function recompute() { $('rv').textContent = 'Ric: ' + nb; lock = {}; scan(); }
+function load(i) {
+  run++; si = (i + SCENES.length) % SCENES.length;
+  alive = sc().enemies.map(() => true); switches = 0; lastAng = null; det = []; simT = 0; ammo = 5; bullet = null; finger = null; demo = null; won = false; trail = [];
+  $('sn').textContent = (si + 1) + '/' + SCENES.length;
+  recompute();
+  setMsg(sol.length ? 'Fase ' + (si + 1) + ' — ' + sc().name + '. O guia achou ' + sol.length + ' rota(s). Mire no ponto azul e solte.' : 'Sem rota com ' + nb + ' ricochetes. Aumente "Ric".');
+}
+function fire(p) {
+  if (bullet || ammo <= 0 || won) return;
+  const s = sc().shooter, dx = p[0] - s[0], dy = p[1] - s[1], len = Math.hypot(dx, dy);
+  if (len < 5) return;
+  const pts = trace(s, dx / len, dy / len, curBlocks(), nb, null).pts;
+  let total = 0; for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  bullet = { pts, d: 0, total: Math.min(total, 3000) }; ammo--; trail = [];
+}
+function bulletPos(b) {
+  let d = b.d;
+  for (let i = 1; i < b.pts.length; i++) {
+    const a = b.pts[i - 1], c = b.pts[i], l = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    if (d <= l) return [a[0] + (c[0] - a[0]) * d / l, a[1] + (c[1] - a[1]) * d / l];
+    d -= l;
+  }
+  return b.pts[b.pts.length - 1];
+}
+function afterShot() {
+  bullet = null; scan();
+  const my = run;
+  if (!alive.some(x => x)) {
+    won = true; setMsg('Acertou! Fase concluída. ' + (autoAll ? '' : 'Toque em "Fase ▶" para a próxima.'));
+    if (autoAll) setTimeout(() => { if (run === my) { if (si + 1 < SCENES.length) { load(si + 1); startDemo(); } else { autoAll = false; setMsg('As 10 cenas foram resolvidas pelo guia.'); } } }, 1400);
+  } else if (ammo <= 0) { setMsg('Acabaram as balas. Toque em ↻ para reiniciar.'); autoAll = false; }
+  else { setMsg('Ainda há inimigo. O guia recalculou a rota.'); if (autoAll) setTimeout(() => { if (run === my) startDemo(); }, 900); }
+}
+function startDemo() {
+  if (bullet || won) return;
+  guide = true; $('guide').className = 'on'; $('guide').textContent = 'Guia: ON';
+  recompute();
+  if (!sol.length) { setMsg('Sem rota com ' + nb + ' ricochetes. Aumente "Ric".'); autoAll = false; return; }
+  const a = AREA, from = [(a.l + a.r) / 2, 150];
+  demo = { t: 0, from, to: sol[0].aim };
+  finger = { x: from[0], y: from[1], down: true };
+  setMsg('1) O guia traçou a rota verde e marcou o ponto azul (onde mirar).');
+}
+function ease(x) { return x * x * (3 - 2 * x); }
+
+// entrada
+function pos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * W / r.width, (e.clientY - r.top) * H / r.height]; }
+cv.addEventListener('pointerdown', e => { if (demo || bullet) return; cv.setPointerCapture(e.pointerId); const p = pos(e); finger = { x: p[0], y: p[1], down: true }; });
+cv.addEventListener('pointermove', e => { if (!finger || demo) return; const p = pos(e); finger.x = p[0]; finger.y = p[1]; });
+cv.addEventListener('pointerup', e => { if (!finger || demo) return; const p = [finger.x, finger.y]; finger = null; fire(p); });
+
+$('prev').onclick = () => { autoAll = false; load(si - 1); };
+$('next').onclick = () => { autoAll = false; load(si + 1); };
+$('reset').onclick = () => { autoAll = false; load(si); };
+$('stab').onclick = () => { stable = !stable; lock = {}; switches = 0; lastAng = null; $('stab').className = stable ? 'on' : ''; $('stab').textContent = 'Rota travada: ' + (stable ? 'ON' : 'OFF'); scan(); };
+$('guide').onclick = () => { guide = !guide; $('guide').className = guide ? 'on' : ''; $('guide').textContent = 'Guia: ' + (guide ? 'ON' : 'OFF'); };
+$('rm').onclick = () => { nb = Math.max(1, nb - 1); recompute(); };
+$('rp').onclick = () => { nb = Math.min(6, nb + 1); recompute(); };
+$('demo').onclick = () => { autoAll = false; if (won || ammo <= 0) load(si); startDemo(); };
+$('all').onclick = () => { autoAll = true; load(0); startDemo(); };
+
+// desenho
+function person(x, cy, col, hat) {
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, cy - 18, 7, 0, 7); ctx.fill();
+  ctx.fillRect(x - 8, cy - 11, 16, 22); ctx.fillRect(x - 7, cy + 11, 5, 14); ctx.fillRect(x + 2, cy + 11, 5, 14);
+  if (hat) { ctx.fillStyle = '#243a6b'; ctx.fillRect(x - 11, cy - 24, 22, 4); ctx.fillRect(x - 6, cy - 31, 12, 8); }
+}
+function dead(x, cy) { ctx.fillStyle = '#5a2b2b'; ctx.fillRect(x - 18, cy + 15, 36, 10); ctx.beginPath(); ctx.arc(x + 22, cy + 20, 6, 0, 7); ctx.fill(); }
+function dashRect(x0, y0, x1, y1, col) { ctx.save(); ctx.setLineDash([8, 6]); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0); ctx.restore(); }
+function path(pts, col, w) { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); ctx.fillStyle = '#fff'; for (let i = 1; i < pts.length - 1; i++) { ctx.beginPath(); ctx.arc(pts[i][0], pts[i][1], 3.5, 0, 7); ctx.fill(); } }
+
+function draw() {
+  const s = sc(), A = AREA;
+  ctx.fillStyle = '#8c3f2a'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1;
+  for (let y = 0; y < H; y += 14) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+  const g = ctx.createLinearGradient(0, A.t, 0, A.b); g.addColorStop(0, '#c5d0e6'); g.addColorStop(1, '#9aa9ca');
+  ctx.fillStyle = g; ctx.fillRect(A.l, A.t, A.r - A.l, A.b - A.t);
+  const CB = curBlocks();
+  for (const b of CB) {
+    ctx.fillStyle = '#9c4a31'; ctx.fillRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    ctx.strokeStyle = '#d08a63'; ctx.lineWidth = 2; ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+  }
+  // HUD
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'left'; ctx.fillText('Fase ' + (si + 1) + ' · ' + s.name, 12, 24);
+  for (let i = 0; i < 5; i++) { ctx.fillStyle = i < ammo ? '#f5c542' : 'rgba(0,0,0,.35)'; ctx.fillRect(250 + i * 20, 12, 9, 18); }
+  if (guide) { dashRect(A.l, A.t, A.r, A.b, '#34c759'); for (const b of CB) dashRect(b[0], b[1], b[2], b[3], '#ff6bd6'); }
+
+  // personagens
+  const aimP = finger ? [finger.x, finger.y] : (sol[0] ? sol[0].aim : [s.shooter[0] + 60, s.shooter[1]]);
+  s.enemies.forEach((e, k) => alive[k] ? person(e[0], e[1], '#3a2e33') : dead(e[0], e[1]));
+  person(s.shooter[0], s.shooter[1], '#2f6fb0', true);
+  const ga = Math.atan2(aimP[1] - s.shooter[1], aimP[0] - s.shooter[0]);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(s.shooter[0], s.shooter[1] - 4); ctx.lineTo(s.shooter[0] + Math.cos(ga) * 24, s.shooter[1] - 4 + Math.sin(ga) * 24); ctx.stroke();
+
+  // guia
+  if (guide && !won) {
+    ctx.strokeStyle = '#34c759'; ctx.lineWidth = 2;
+    det.forEach((e, k) => { if (alive[k]) { ctx.beginPath(); ctx.arc(e[0], e[1] - 4, 26, 0, 7); ctx.stroke(); } });
+    sol.slice().reverse().forEach((r, ri) => { const best = ri === sol.length - 1; path(r.pts, best ? '#34c759' : '#00c7ff', best ? 3.5 : 2.2); });
+    sol.forEach((r, i) => {
+      ctx.fillStyle = '#0a84ff'; ctx.beginPath(); ctx.arc(r.aim[0], r.aim[1], 6, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#0a84ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(r.aim[0], r.aim[1], 12, 0, 7); ctx.stroke();
+      if (i === 0) { ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText('mire aqui', r.aim[0], r.aim[1] - 18); }
+    });
+  }
+  // mira do próprio jogo (cruz no dedo + linha pontilhada)
+  if (finger) {
+    ctx.save(); ctx.setLineDash([3, 6]); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(s.shooter[0], s.shooter[1] - 4); ctx.lineTo(finger.x, finger.y); ctx.stroke(); ctx.restore();
+    ctx.strokeStyle = '#f5c542'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(finger.x, finger.y, 12, 0, 7); ctx.moveTo(finger.x - 18, finger.y); ctx.lineTo(finger.x + 18, finger.y); ctx.moveTo(finger.x, finger.y - 18); ctx.lineTo(finger.x, finger.y + 18); ctx.stroke();
+    if (demo) { ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.arc(finger.x, finger.y, 22, 0, 7); ctx.fill(); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 2; ctx.stroke(); }
+  }
+  // bala
+  if (bullet) {
+    const p = bulletPos(bullet); trail.push(p); if (trail.length > 14) trail.shift();
+    ctx.strokeStyle = 'rgba(255,220,90,.7)'; ctx.lineWidth = 3; ctx.beginPath(); trail.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke();
+    ctx.fillStyle = '#ffd84a'; ctx.beginPath(); ctx.arc(p[0], p[1], 4.5, 0, 7); ctx.fill();
+  }
+}
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  simT += dt; scanT += dt;
+  if (scanT > 0.4 && !bullet) { scanT = 0; scan(); }
+  if (demo) {
+    demo.t += dt;
+    if (demo.t < 0.9) { const k = ease(demo.t / 0.9); finger.x = demo.from[0] + (demo.to[0] - demo.from[0]) * k; finger.y = demo.from[1] + (demo.to[1] - demo.from[1]) * k; }
+    else if (demo.t < 1.6) { finger.x = demo.to[0]; finger.y = demo.to[1]; setMsg('2) Segure a mira no ponto azul. O jogo mostra a cruz dele; a rota verde mostra o caminho.'); }
+    else { const p = demo.to; demo = null; finger = null; fire(p); setMsg('3) Solte: o tiro bate na parede, ricocheteia e vai até o alvo.'); }
+  }
+  if (bullet) {
+    let rest = 900 * dt;
+    while (rest > 0 && bullet) { // passos curtos para a bala não atravessar o inimigo
+      const st = Math.min(3, rest); bullet.d += st; rest -= st;
+      const p = bulletPos(bullet);
+      sc().enemies.forEach((e, k) => { if (alive[k] && Math.hypot(p[0] - e[0], p[1] - e[1]) < HIT_R) alive[k] = false; });
+      if (bullet.d >= bullet.total) afterShot();
+    }
+  }
+  draw(); requestAnimationFrame(frame);
+}
+load(0); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

@@ -87,13 +87,16 @@ class OverlayService : Service() {
                     val det = findTargets(bmp, a)
                     bmp.recycle()
                     if (det == null) { // tela que não é o jogo (vitória/transição): some com o guia
-                        misses = 3; aim.targets = emptyList()
+                        misses = 3; aim.updateTargets(emptyList())
                     } else {
                         aim.setWalls(det)
-                        det.shooter?.let { aim.origin.set(it.x, it.y); originHandle.refresh() } // acha a atiradora sozinho
+                        // acha a atiradora sozinho; ignora tremida pequena para a rota não mudar à toa
+                        det.shooter?.let {
+                            if (kotlin.math.hypot(it.x - aim.origin.x, it.y - aim.origin.y) > 14f) { aim.origin.set(it.x, it.y); originHandle.refresh() }
+                        }
                         // mantém a última trajetória travada; só limpa depois de 3 prints seguidos sem inimigo
                         misses = if (det.enemies.isEmpty()) misses + 1 else 0
-                        if (det.enemies.isNotEmpty() || misses >= 3) aim.targets = det.enemies
+                        if (det.enemies.isNotEmpty() || misses >= 3) aim.updateTargets(det.enemies)
                     }
                     aim.invalidate()
                 }

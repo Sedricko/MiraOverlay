@@ -26,6 +26,16 @@ class AimView(ctx: Context) : View(ctx) {
         set(v) { field = v.coerceIn(0, 8); invalidate() }
     var autoMode = true
     var targets: List<PointF> = emptyList()
+        private set
+    private var locks = listOf<Pair<PointF, Float>>() // (inimigo, ângulo da rota travada)
+    private var multiLock: Float? = null
+
+    /** Atualiza os alvos; se um inimigo mal se mexeu (<14px) mantém o ponto antigo, para a rota não tremer. */
+    fun updateTargets(new: List<PointF>) {
+        val old = targets
+        targets = new.map { n -> old.firstOrNull { hypot(it.x - n.x, it.y - n.y) < 14f } ?: n }
+        invalidate()
+    }
     var onShoot: ((Float, Float) -> Unit)? = null
     var offX = 0f   // canto da janela na tela
     var offY = 0f
@@ -134,46 +144,63 @@ class AimView(ctx: Context) : View(ctx) {
 
     private fun aimOf(ang: Float) = PointF(origin.x + cos(ang) * 300f, origin.y + sin(ang) * 300f)
 
+    private fun angDiff(a: Float, b: Float): Float {
+        val d = abs(a - b) % (2 * Math.PI.toFloat())
+        return min(d, 2 * Math.PI.toFloat() - d)
+    }
+
     /**
      * Rotas: a melhor para cada inimigo (cor 0 = menos ricochetes, 1 = as outras)
      * e, se existir, uma que acerta todos de uma vez (cor 2, vale se a bala atravessar).
+     * A rota fica TRAVADA enquanto continuar acertando; só troca quando deixa de acertar.
      */
     private fun solve(): List<Triple<List<PointF>, PointF, Int>> {
         val area = rect(areaA, areaB); val block = rect(blockA, blockB)
         val per = mutableListOf<Pair<List<PointF>, PointF>>()
+        val newLocks = mutableListOf<Pair<PointF, Float>>()
         for (t in targets) {
-            var best: Triple<List<PointF>, Float, Float>? = null // pts, ang, distância ao centro
-            val cluster = mutableListOf<Triple<List<PointF>, Float, Float>>()
-            var last = -1000
-            // dentro de um grupo de ângulos que acertam, o que passa mais perto do centro do inimigo
-            fun flush() {
-                cluster.minByOrNull { it.third }?.let { c ->
-                    val b = best
-                    if (b == null || c.first.size < b.first.size || (c.first.size == b.first.size && c.third < b.third)) best = c
+            val oldAng = locks.firstOrNull { hypot(it.first.x - t.x, it.first.y - t.y) < 40f }?.second
+            var route: Pair<List<PointF>, Float>? = null
+            if (oldAng != null) { // a rota travada ainda acerta?
+                val (pts, hit, _) = trace(cos(oldAng), sin(oldAng), area, block, t)
+                if (hit) route = pts to oldAng
+            }
+            if (route == null) {
+                val reps = mutableListOf<Triple<List<PointF>, Float, Float>>() // pts, ang, distância ao centro
+                val cluster = mutableListOf<Triple<List<PointF>, Float, Float>>()
+                var last = -1000
+                // dentro de um grupo de ângulos que acertam, o que passa mais perto do centro do inimigo
+                fun flush() { cluster.minByOrNull { it.third }?.let { reps.add(it) }; cluster.clear() }
+                for (a in 0 until 3600) {
+                    val ang = a * (2 * Math.PI / 3600).toFloat()
+                    val (pts, hit, d) = trace(cos(ang), sin(ang), area, block, t)
+                    if (!hit) continue
+                    if (a - last > 30) flush() // mais de 3° de diferença = rota diferente
+                    cluster.add(Triple(pts, ang, d)); last = a
                 }
-                cluster.clear()
+                flush()
+                // menos ricochetes; empate: a mais parecida com a anterior (ou a mais central)
+                reps.minWithOrNull(compareBy({ it.first.size }, { if (oldAng != null) angDiff(it.second, oldAng) else it.third }))
+                    ?.let { route = it.first to it.second }
             }
-            for (a in 0 until 3600) {
-                val ang = a * (2 * Math.PI / 3600).toFloat()
-                val (pts, hit, d) = trace(cos(ang), sin(ang), area, block, t)
-                if (!hit) continue
-                if (a - last > 30) flush() // mais de 3° de diferença = rota diferente
-                cluster.add(Triple(pts, ang, d)); last = a
-            }
-            flush()
-            best?.let { per.add(it.first to aimOf(it.second)) }
+            route?.let { per.add(it.first to aimOf(it.second)); newLocks.add(t to it.second) }
         }
+        locks = newLocks
         val out = per.sortedBy { it.first.size }.mapIndexed { i, r -> Triple(r.first, r.second, if (i == 0) 0 else 1) }.toMutableList()
         if (targets.size >= 2) {
-            var run = mutableListOf<Float>(); var all: Pair<List<PointF>, Float>? = null
-            for (a in 0..3600) {
-                val ang = a * (2 * Math.PI / 3600).toFloat()
-                if (a < 3600 && traceAll(cos(ang), sin(ang), area, block).second == targets.size) { run.add(ang); continue }
-                if (run.isNotEmpty() && all == null) { val m = run[run.size / 2]; all = traceAll(cos(m), sin(m), area, block).first to m }
-                run = mutableListOf()
+            var ang: Float? = multiLock?.takeIf { traceAll(cos(it), sin(it), area, block).second == targets.size }
+            if (ang == null) {
+                var run = mutableListOf<Float>()
+                for (a in 0..3600) {
+                    val g = a * (2 * Math.PI / 3600).toFloat()
+                    if (a < 3600 && traceAll(cos(g), sin(g), area, block).second == targets.size) { run.add(g); continue }
+                    if (run.isNotEmpty() && ang == null) ang = run[run.size / 2]
+                    run = mutableListOf()
+                }
             }
-            all?.let { out.add(Triple(it.first, aimOf(it.second), 2)) }
-        }
+            multiLock = ang
+            ang?.let { out.add(Triple(traceAll(cos(it), sin(it), area, block).first, aimOf(it), 2)) }
+        } else multiLock = null
         return out
     }
 
